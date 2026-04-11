@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>子珍甜點 | Zizhen Sweets</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, addDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- 配置與初始化 ---
+        let app, auth, db;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'zizhen-desserts';
+        let isLocalMode = false;
+
+        try {
+            // 在本機測試時，直接使用您的真實 Firebase 設定
+            const firebaseConfig = {
+                apiKey: "AIzaSyC-NjffxHAdbJbNfyu7seZWU53tcg6wfo4",
+                authDomain: "zizhen-sweets.firebaseapp.com",
+                projectId: "zizhen-sweets",
+                storageBucket: "zizhen-sweets.firebasestorage.app",
+                messagingSenderId: "706637362289",
+                appId: "1:706637362289:web:9352032eabf1641e2b57d0"
+            };
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+            isLocalMode = false; // 確保關閉離線模式
+        } catch (error) {
+            console.error("Firebase 初始化失敗：", error);
+            isLocalMode = true;
+        }
+
+        // --- 全域變數 ---
+        let currentUser = null;
+        let cart = JSON.parse(localStorage.getItem('zizhen_cart')) || [];
+        let activeTab = 'home';
+        let products = [];
+
+        // --- 核心功能：身份驗證 ---
+        async function initAuth() {
+            if (isLocalMode) {
+                updateUI(); // 離線模式直接更新UI
+                return;
+            }
+            // 由於尚未啟用匿名登入，先移除 signInAnonymously 避免報錯
+            // 讓使用者以未登入狀態瀏覽，並透過點擊登入按鈕進行 Google 登入
+            updateUI(); 
+        }
+
+        if (!isLocalMode) {
+            onAuthStateChanged(auth, (user) => {
+                currentUser = user;
+                updateUI();
+                if (user && !user.isAnonymous) {
+                    loadOrders(); // 只有非匿名用戶才載入專屬訂單
+                }
+                if (user) {
+                    loadMessages();
+                }
+            });
+        }
+
+        window.handleLogin = async () => {
+            if (isLocalMode) {
+                showNotification("離線預覽模式下無法進行 Google 登入", "error");
+                return;
+            }
+            const provider = new GoogleAuthProvider();
+            try {
+                await signInWithPopup(auth, provider);
+                showNotification("Google 登入成功！歡迎來到子珍甜點。");
+                loadOrders(); // 登入後重新載入訂單
+            } catch (error) {
+                console.error(error);
+                showNotification("登入失敗，可能因網域安全限制或使用者取消", "error");
+            }
+        };
+
+        window.handleLogout = () => {
+            if (isLocalMode) return;
+            signOut(auth);
+            showNotification("已登出。");
+            currentUser = null;
+            updateUI();
+            document.getElementById('order-list').innerHTML = `<div class="text-center py-20 text-stone-500">請先登入 Google 帳號以查看您的訂單紀錄<br><button onclick="handleLogin()" class="mt-4 px-6 py-2 bg-stone-800 text-white rounded-lg">點此登入</button></div>`;
+            document.getElementById('qa-list').innerHTML = '';
+        };
+
+        // --- 資料操作：產品管理 ---
+        async function loadProducts() {
+            if (isLocalMode) {
+                // 離線模式提供假資料供介面預覽，避免畫面空白
+                products = [
+                    { id: "1", name: "法式經典檸檬塔 (本機展示)", price: 180, desc: "選用在地小農黃檸檬，酸甜平衡的完美比例。", category: "塔類", image: "https://images.unsplash.com/photo-1519915028121-7d3463d20b13?auto=format&fit=crop&q=80&w=400" },
+                    { id: "2", name: "海鹽焦糖可麗露 (本機展示)", price: 85, desc: "外皮焦香脆口，內餡軟Ｑ滑順。", category: "常溫點心", image: "https://images.unsplash.com/photo-1605696140502-0949d8e5792d?auto=format&fit=crop&q=80&w=400" },
+                    { id: "3", name: "宇治抹茶千層蛋糕 (本機展示)", price: 220, desc: "日本進口小山園抹茶粉，層層堆疊的濃郁茶香。", category: "蛋糕", image: "https://images.unsplash.com/photo-1582760904350-f949c869e901?auto=format&fit=crop&q=80&w=400" }
+                ];
+                renderShop();
+                return;
+            }
+            try {
+                const prodCol = collection(db, 'artifacts', appId, 'public', 'data', 'products');
+                const snapshot = await getDocs(prodCol);
+                products = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                
+                // 預設資料 (若無資料時寫入)
+                if (products.length === 0) {
+                    const initialProducts = [
+                        { name: "法式經典檸檬塔", price: 180, desc: "選用在地小農黃檸檬，酸甜平衡的完美比例。", category: "塔類", image: "https://images.unsplash.com/photo-1519915028121-7d3463d20b13?auto=format&fit=crop&q=80&w=400" },
+                        { name: "海鹽焦糖可麗露", price: 85, desc: "外皮焦香脆口，內餡軟Ｑ滑順。", category: "常溫點心", image: "https://images.unsplash.com/photo-1605696140502-0949d8e5792d?auto=format&fit=crop&q=80&w=400" },
+                        { name: "宇治抹茶千層蛋糕", price: 220, desc: "日本進口小山園抹茶粉，層層堆疊的濃郁茶香。", category: "蛋糕", image: "https://images.unsplash.com/photo-1582760904350-f949c869e901?auto=format&fit=crop&q=80&w=400" }
+                    ];
+                    for (let p of initialProducts) {
+                        await addDoc(prodCol, p);
+                    }
+                    loadProducts(); // 重新載入
+                    return;
+                }
+                renderShop();
+            } catch (error) {
+                console.error("載入產品失敗:", error);
+                // 發生錯誤（例如權限問題）時顯示預設假資料
+                products = [
+                    { id: "1", name: "法式經典檸檬塔 (展示)", price: 180, desc: "選用在地小農黃檸檬，酸甜平衡的完美比例。", category: "塔類", image: "https://images.unsplash.com/photo-1519915028121-7d3463d20b13?auto=format&fit=crop&q=80&w=400" },
+                    { id: "2", name: "海鹽焦糖可麗露 (展示)", price: 85, desc: "外皮焦香脆口，內餡軟Ｑ滑順。", category: "常溫點心", image: "https://images.unsplash.com/photo-1605696140502-0949d8e5792d?auto=format&fit=crop&q=80&w=400" }
+                ];
+                renderShop();
+                showNotification("無法連線至資料庫，顯示展示商品。", "error");
+            }
+        }
+
+        // --- 購物車功能 ---
+        window.addToCart = (productId) => {
+            const product = products.find(p => p.id === productId);
+            if (product) {
+                const existing = cart.find(item => item.id === productId);
+                if (existing) {
+                    existing.quantity += 1;
+                } else {
+                    cart.push({ ...product, quantity: 1 });
+                }
+                saveCart();
+                showNotification(`已將 ${product.name} 加入購物車`);
+                renderCart();
+            }
+        };
+
+        function saveCart() {
+            localStorage.setItem('zizhen_cart', JSON.stringify(cart));
+            const count = cart.reduce((a, b) => a + b.quantity, 0);
+            document.getElementById('cart-count').innerText = count;
+            const mobileCount = document.getElementById('cart-count-mobile');
+            if (mobileCount) mobileCount.innerText = count;
+        }
+
+        window.removeFromCart = (index) => {
+            cart.splice(index, 1);
+            saveCart();
+            renderCart();
+        };
+
+        window.checkout = async () => {
+            if (!currentUser && !isLocalMode) {
+                showNotification("為了保護您的訂單資料，結帳前請先登入 Google 帳號", "error");
+                await window.handleLogin();
+                return;
+            }
+            
+            if (cart.length === 0) return;
+
+            if (isLocalMode) {
+                showNotification("本機離線模式無法將訂單寫入資料庫。", "error");
+                return;
+            }
+
+            const orderData = {
+                userId: currentUser.uid,
+                userName: currentUser.displayName || "顧客",
+                items: cart,
+                total: cart.reduce((sum, item) => sum + (item.price * item.quantity), 0),
+                status: '處理中',
+                createdAt: new Date().toISOString()
+            };
+
+            try {
+                const orderCol = collection(db, 'artifacts', appId, 'public', 'data', 'orders');
+                await addDoc(orderCol, orderData);
+                cart = [];
+                saveCart();
+                showNotification("訂單提交成功！請至我的訂單查詢進度。");
+                toggleCart();
+                switchTab('orders');
+            } catch (e) {
+                console.error("結帳失敗", e);
+                showNotification("結帳失敗，請稍後再試。", "error");
+            }
+        };
+
+        // --- 問答系統 ---
+        window.submitQuestion = async (e) => {
+            e.preventDefault();
+            const content = document.getElementById('qa-input').value;
+            if (!content) return;
+            
+            if (isLocalMode) {
+                showNotification("本機離線模式無法送出留言。", "error");
+                return;
+            }
+            
+            if (!currentUser) {
+                showNotification("請先登入以送出留言。", "error");
+                await window.handleLogin();
+                return;
+            }
+
+            const msgData = {
+                userId: currentUser.uid,
+                userName: currentUser.displayName || "顧客",
+                content: content,
+                reply: "",
+                status: "待處理",
+                createdAt: new Date().toISOString()
+            };
+
+            try {
+                const msgCol = collection(db, 'artifacts', appId, 'public', 'data', 'messages');
+                await addDoc(msgCol, msgData);
+                document.getElementById('qa-input').value = "";
+                showNotification("提問已送出，我們將盡快回覆。");
+                loadMessages();
+            } catch (e) {
+                console.error(e);
+                showNotification("留言送出失敗", "error");
+            }
+        };
+
+        // --- UI 渲染邏輯 ---
+        function switchTab(tab) {
+            activeTab = tab;
+            const sections = ['home', 'shop', 'orders', 'qa'];
+            sections.forEach(s => {
+                const el = document.getElementById(`section-${s}`);
+                if(el) el.classList.add('hidden');
+            });
+            const activeEl = document.getElementById(`section-${tab}`);
+            if(activeEl) activeEl.classList.remove('hidden');
+            
+            if (tab === 'shop') loadProducts();
+            if (tab === 'orders') loadOrders();
+            if (tab === 'qa') {
+                 if (currentUser) {
+                     loadMessages();
+                 } else {
+                     document.getElementById('qa-list').innerHTML = `<div class="text-center py-8 text-stone-500">登入後即可查看留言紀錄</div>`;
+                 }
+            }
+            
+            window.scrollTo(0, 0);
+            toggleMobileMenu(false);
+        }
+        window.switchTab = switchTab;
+
+        function renderShop() {
+            const container = document.getElementById('product-grid');
+            container.innerHTML = products.map(p => `
+                <div class="bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow border border-stone-100">
+                    <img src="${p.image}" class="w-full h-48 object-cover" alt="${p.name}">
+                    <div class="p-4">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-stone-800">${p.name}</h3>
+                            <span class="text-amber-600 font-medium">$${p.price}</span>
+                        </div>
+                        <p class="text-sm text-stone-500 mb-4 h-10 overflow-hidden">${p.desc}</p>
+                        <button onclick="addToCart('${p.id}')" class="w-full bg-stone-800 text-white py-2 rounded-lg hover:bg-stone-700 transition-colors flex items-center justify-center gap-2">
+                            <i data-lucide="shopping-cart" class="w-4 h-4"></i> 加入購物車
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        async function loadOrders() {
+            const container = document.getElementById('order-list');
+            if (!currentUser || currentUser.isAnonymous) {
+                container.innerHTML = `<div class="text-center py-20 text-stone-500">請先登入 Google 帳號以查看您的訂單紀錄<br><button onclick="handleLogin()" class="mt-4 px-6 py-2 bg-stone-800 text-white rounded-lg">點此登入</button></div>`;
+                return;
+            }
+            
+            try {
+                const q = collection(db, 'artifacts', appId, 'public', 'data', 'orders');
+                const snapshot = await getDocs(q);
+                const userOrders = snapshot.docs
+                    .map(doc => ({ id: doc.id, ...doc.data() }))
+                    .filter(o => o.userId === currentUser.uid)
+                    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+                if (userOrders.length === 0) {
+                    container.innerHTML = `<div class="text-center py-20 text-stone-400">目前尚無訂單紀錄</div>`;
+                    return;
+                }
+
+                container.innerHTML = userOrders.map(o => `
+                    <div class="bg-white p-6 rounded-xl border border-stone-100 mb-4 shadow-sm">
+                        <div class="flex justify-between items-center mb-4">
+                            <div>
+                                <span class="text-xs text-stone-400 font-mono">訂單編號: ${o.id}</span>
+                                <div class="text-sm text-stone-500">${new Date(o.createdAt).toLocaleString()}</div>
+                            </div>
+                            <span class="px-3 py-1 rounded-full text-xs font-medium ${o.status === '處理中' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}">${o.status}</span>
+                        </div>
+                        <div class="border-t border-b border-stone-50 py-3 my-3">
+                            ${o.items.map(item => `
+                                <div class="flex justify-between text-sm mb-1">
+                                    <span>${item.name} <span class="text-stone-400">x ${item.quantity}</span></span>
+                                    <span>$${item.price * item.quantity}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <div class="flex justify-between font-bold text-stone-800">
+                            <span>總計</span>
+                            <span class="text-amber-600">$${o.total}</span>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error("載入訂單失敗:", error);
+                container.innerHTML = `<div class="text-center py-20 text-red-500">無法載入訂單紀錄，請稍後再試。</div>`;
+            }
+        }
+
+        async function loadMessages() {
+            const container = document.getElementById('qa-list');
+            try {
+                const q = collection(db, 'artifacts', appId, 'public', 'data', 'messages');
+                const snapshot = await getDocs(q);
+                const msgs = snapshot.docs
+                    .map(doc => ({ id: doc.id, ...doc.data() }))
+                    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+                container.innerHTML = msgs.map(m => `
+                    <div class="bg-stone-50 p-4 rounded-xl mb-4">
+                        <div class="flex items-start gap-3">
+                            <div class="bg-stone-200 w-8 h-8 rounded-full flex items-center justify-center shrink-0">
+                                <i data-lucide="user" class="w-4 h-4 text-stone-500"></i>
+                            </div>
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs font-bold text-stone-600">${m.userName}</span>
+                                    <span class="text-[10px] text-stone-400">${new Date(m.createdAt).toLocaleString()}</span>
+                                </div>
+                                <p class="text-stone-800 text-sm mt-1">${m.content}</p>
+                            </div>
+                        </div>
+                        ${m.reply ? `
+                            <div class="mt-4 ml-11 bg-white p-3 rounded-lg border border-amber-100 relative">
+                                <div class="absolute -left-2 top-3 w-2 h-2 bg-white border-l border-b border-amber-100 transform rotate-45"></div>
+                                <div class="flex items-center gap-1 mb-1">
+                                    <i data-lucide="store" class="w-3 h-3 text-amber-600"></i>
+                                    <span class="text-xs font-bold text-amber-700">店家回覆</span>
+                                </div>
+                                <p class="text-stone-600 text-sm">${m.reply}</p>
+                            </div>
+                        ` : '<p class="mt-2 ml-11 text-xs text-stone-400 italic">店家處理中...</p>'}
+                    </div>
+                `).join('');
+                lucide.createIcons();
+            } catch (error) {
+                console.error("載入留言失敗:", error);
+            }
+        }
+
+        function renderCart() {
+            const container = document.getElementById('cart-items');
+            const totalEl = document.getElementById('cart-total');
+            const checkoutBtn = document.getElementById('checkout-btn');
+            
+            if (cart.length === 0) {
+                container.innerHTML = '<div class="flex flex-col items-center justify-center h-full text-stone-400"><i data-lucide="shopping-cart" class="w-12 h-12 mb-2 opacity-50"></i><p>購物車是空的</p></div>';
+                totalEl.innerText = '0';
+                checkoutBtn.innerText = "前往結帳";
+                lucide.createIcons();
+                return;
+            }
+
+            container.innerHTML = cart.map((item, index) => `
+                <div class="flex justify-between items-center mb-4 pb-4 border-b border-stone-50">
+                    <div class="flex gap-3 items-center">
+                        <img src="${item.image}" class="w-16 h-16 rounded-lg object-cover border border-stone-100">
+                        <div>
+                            <div class="font-bold text-stone-800 text-sm">${item.name}</div>
+                            <div class="text-sm text-stone-500">$${item.price} x ${item.quantity}</div>
+                        </div>
+                    </div>
+                    <button onclick="removeFromCart(${index})" class="text-stone-300 hover:text-red-500 transition-colors p-2">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            `).join('');
+            totalEl.innerText = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+            
+            if(currentUser && !currentUser.isAnonymous) {
+                checkoutBtn.innerText = "前往結帳";
+            } else {
+                checkoutBtn.innerText = "登入以結帳";
+            }
+            
+            lucide.createIcons();
+        }
+
+        function showNotification(msg, type = 'success') {
+            const toast = document.createElement('div');
+            toast.className = `fixed bottom-24 md:bottom-10 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full shadow-xl text-sm font-medium z-50 transition-all duration-300 flex items-center gap-2 ${type === 'success' ? 'bg-stone-800 text-white' : 'bg-red-500 text-white'}`;
+            toast.innerHTML = `<i data-lucide="${type === 'success' ? 'check-circle' : 'alert-circle'}" class="w-4 h-4"></i> ${msg}`;
+            document.body.appendChild(toast);
+            lucide.createIcons();
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translate(-50%, 10px)';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        function updateUI() {
+            const userBtn = document.getElementById('user-btn');
+            if (currentUser) {
+                userBtn.innerHTML = `
+                    <img src="${currentUser.photoURL || 'https://via.placeholder.com/32'}" class="w-6 h-6 rounded-full border border-stone-200">
+                    <span class="hidden md:inline text-sm">${currentUser.displayName || '使用者'}</span>
+                `;
+                userBtn.onclick = handleLogout; // 點擊已登入頭像改為登出
+            } else {
+                userBtn.innerHTML = `<i data-lucide="user" class="w-5 h-5"></i><span class="hidden md:inline">登入</span>`;
+                userBtn.onclick = handleLogin;
+            }
+            lucide.createIcons();
+            saveCart();
+            renderCart(); // 更新購物車按鈕狀態
+        }
+
+        window.toggleCart = () => {
+            const panel = document.getElementById('cart-panel');
+            const overlay = document.getElementById('cart-overlay');
+            panel.classList.toggle('translate-x-full');
+            overlay.classList.toggle('hidden');
+            renderCart();
+        };
+
+        window.toggleMobileMenu = (forceState) => {
+            const menu = document.getElementById('mobile-menu');
+            if(forceState !== undefined) {
+                if(forceState) menu.classList.remove('hidden');
+                else menu.classList.add('hidden');
+            } else {
+                menu.classList.toggle('hidden');
+            }
+        }
+
+        window.onload = async () => {
+            if (isLocalMode) {
+                showNotification("您目前在離線環境中，部分連線功能已鎖定。", "error");
+            }
+            await initAuth();
+            loadProducts();
+            lucide.createIcons();
+        };
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #fcfaf8; }
+        .hero-gradient { background: linear-gradient(rgba(255,255,255,0.2), rgba(255,255,255,0.9)), url('https://images.unsplash.com/photo-1555507036-ab1f4038808a?auto=format&fit=crop&q=80&w=1200'); background-size: cover; background-position: center; }
+        .glass-nav { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(8px); }
+    </style>
+</head>
+<body class="text-stone-800">
+
+    <!-- 導覽列 -->
+    <nav class="fixed top-0 left-0 right-0 z-40 glass-nav border-b border-stone-100 shadow-sm">
+        <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-8">
+                <h1 class="text-2xl font-bold tracking-tighter text-stone-900 cursor-pointer" onclick="switchTab('home')">子珍甜點<span class="text-amber-600">.</span></h1>
+                <div class="hidden md:flex gap-6 text-sm font-medium text-stone-600">
+                    <a href="javascript:void(0)" onclick="switchTab('shop')" class="hover:text-amber-600 transition-colors">所有甜點</a>
+                    <a href="javascript:void(0)" onclick="switchTab('orders')" class="hover:text-amber-600 transition-colors">我的訂單</a>
+                    <a href="javascript:void(0)" onclick="switchTab('qa')" class="hover:text-amber-600 transition-colors">互動問答</a>
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <button id="user-btn" onclick="handleLogin()" class="flex items-center gap-2 text-stone-600 hover:text-amber-600 transition-colors bg-stone-100 px-3 py-1.5 rounded-full">
+                    <i data-lucide="user" class="w-5 h-5"></i>
+                </button>
+                <div class="relative cursor-pointer bg-stone-900 text-white p-2 rounded-full hover:bg-stone-800 transition-colors" onclick="toggleCart()">
+                    <i data-lucide="shopping-bag" class="w-5 h-5"></i>
+                    <span id="cart-count" class="absolute -top-1 -right-1 bg-amber-500 text-white text-[10px] w-4 h-4 flex items-center justify-center rounded-full border border-white">0</span>
+                </div>
+                <button class="md:hidden text-stone-600 p-2" onclick="toggleMobileMenu()">
+                    <i data-lucide="menu" class="w-6 h-6"></i>
+                </button>
+            </div>
+        </div>
+        <!-- Mobile Menu -->
+        <div id="mobile-menu" class="hidden md:hidden bg-white border-t border-stone-100 p-4 flex flex-col gap-4 text-center absolute w-full shadow-lg">
+             <a href="javascript:void(0)" onclick="switchTab('home')" class="block py-2 text-stone-600 hover:text-amber-600">首頁</a>
+             <a href="javascript:void(0)" onclick="switchTab('shop')" class="block py-2 text-stone-600 hover:text-amber-600">所有甜點</a>
+             <a href="javascript:void(0)" onclick="switchTab('orders')" class="block py-2 text-stone-600 hover:text-amber-600">我的訂單</a>
+             <a href="javascript:void(0)" onclick="switchTab('qa')" class="block py-2 text-stone-600 hover:text-amber-600">互動問答</a>
+        </div>
+    </nav>
+
+    <!-- 主要內容區 -->
+    <main class="pt-16 pb-24 min-h-screen">
+        
+        <!-- 首頁 Section -->
+        <section id="section-home" class="">
+            <div class="hero-gradient h-[60vh] flex flex-col items-center justify-center text-center px-4">
+                <span class="px-4 py-1 bg-white/80 rounded-full text-xs font-bold tracking-wider text-amber-700 mb-4 border border-amber-200">HANDCRAFTED DESSERTS</span>
+                <h2 class="text-4xl md:text-6xl font-bold text-stone-900 mb-6 tracking-tight drop-shadow-sm">尋找生活中的那一抹甜</h2>
+                <p class="text-stone-700 max-w-lg mb-8 bg-white/50 p-4 rounded-xl backdrop-blur-sm">子珍甜點堅持選用頂級食材，每一份甜點都是一份對生活的熱愛與堅持。在這裡，您能找到撫慰心靈的甜蜜滋味。</p>
+                <button onclick="switchTab('shop')" class="bg-stone-900 text-white px-8 py-3.5 rounded-full hover:bg-amber-600 transition-colors shadow-lg flex items-center gap-2">
+                    立即挑選 <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                </button>
+            </div>
+            
+            <div class="max-w-6xl mx-auto px-4 py-20">
+                <div class="text-center mb-12">
+                    <h3 class="text-2xl font-bold text-stone-900">我們的堅持</h3>
+                    <div class="w-12 h-1 bg-amber-500 mx-auto mt-4 rounded-full"></div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <div class="text-center p-6 bg-white rounded-3xl shadow-sm border border-stone-50 hover:-translate-y-1 transition-transform">
+                        <div class="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-6 text-amber-600 transform rotate-3">
+                            <i data-lucide="award" class="w-8 h-8"></i>
+                        </div>
+                        <h4 class="font-bold mb-3 text-lg">高品質原料</h4>
+                        <p class="text-sm text-stone-500 leading-relaxed">嚴選法國發酵奶油與日本進口麵粉，堅持無添加，確保每一口的純粹與香濃。</p>
+                    </div>
+                    <div class="text-center p-6 bg-white rounded-3xl shadow-sm border border-stone-50 hover:-translate-y-1 transition-transform">
+                        <div class="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-6 text-amber-600 transform -rotate-3">
+                            <i data-lucide="truck" class="w-8 h-8"></i>
+                        </div>
+                        <h4 class="font-bold mb-3 text-lg">冷藏新鮮配送</h4>
+                        <p class="text-sm text-stone-500 leading-relaxed">專業溫控物流，接單後製作，將最新鮮的手作風味完好無缺地直送到您的家門口。</p>
+                    </div>
+                    <div class="text-center p-6 bg-white rounded-3xl shadow-sm border border-stone-50 hover:-translate-y-1 transition-transform">
+                        <div class="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-6 text-amber-600 transform rotate-3">
+                            <i data-lucide="heart" class="w-8 h-8"></i>
+                        </div>
+                        <h4 class="font-bold mb-3 text-lg">客製化服務</h4>
+                        <p class="text-sm text-stone-500 leading-relaxed">無論是慶生、紀念日還是企業禮盒，我們都能為您量身打造專屬的甜蜜時刻。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 甜點目錄 Section -->
+        <section id="section-shop" class="max-w-6xl mx-auto px-4 py-12 hidden">
+            <div class="flex flex-col md:flex-row justify-between items-end mb-10 gap-4 border-b border-stone-100 pb-6">
+                <div>
+                    <h2 class="text-3xl font-bold text-stone-900 mb-2">甜點目錄</h2>
+                    <p class="text-stone-500">挑選您喜愛的法式經典與手作甜品</p>
+                </div>
+                <div class="flex gap-2 overflow-x-auto pb-2 md:pb-0 w-full md:w-auto">
+                    <button class="whitespace-nowrap px-5 py-2 text-sm rounded-full bg-stone-800 text-white transition-colors">全部商品</button>
+                    <button class="whitespace-nowrap px-5 py-2 text-sm rounded-full bg-stone-100 text-stone-600 hover:bg-stone-200 transition-colors">塔類</button>
+                    <button class="whitespace-nowrap px-5 py-2 text-sm rounded-full bg-stone-100 text-stone-600 hover:bg-stone-200 transition-colors">蛋糕</button>
+                    <button class="whitespace-nowrap px-5 py-2 text-sm rounded-full bg-stone-100 text-stone-600 hover:bg-stone-200 transition-colors">常溫點心</button>
+                </div>
+            </div>
+
+            <div id="product-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                <!-- 產品動態載入 -->
+            </div>
+        </section>
+
+        <!-- 我的訂單 Section -->
+        <section id="section-orders" class="max-w-4xl mx-auto px-4 py-12 hidden">
+            <div class="mb-8">
+                <h2 class="text-3xl font-bold text-stone-900 mb-2">訂單紀錄</h2>
+                <p class="text-stone-500">追蹤您的甜蜜包裹</p>
+            </div>
+            <div id="order-list" class="space-y-6">
+                <!-- 訂單動態載入 -->
+            </div>
+        </section>
+
+        <!-- 互動問答 Section -->
+        <section id="section-qa" class="max-w-4xl mx-auto px-4 py-12 hidden">
+            <div class="mb-8 text-center">
+                <h2 class="text-3xl font-bold text-stone-900 mb-2">聯絡我們</h2>
+                <p class="text-stone-500">對商品、成分或大量訂購有任何疑問？歡迎留言給我們。</p>
+            </div>
+            
+            <form onsubmit="submitQuestion(event)" class="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-100 mb-12 max-w-2xl mx-auto">
+                <label class="block text-sm font-bold text-stone-700 mb-2">有什麼可以幫忙的嗎？</label>
+                <textarea id="qa-input" class="w-full p-4 bg-stone-50 border border-stone-200 rounded-2xl text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none resize-none mb-4 transition-all" rows="4" placeholder="請輸入您的問題..."></textarea>
+                <div class="flex items-center justify-between">
+                    <span class="text-xs text-stone-400"><i data-lucide="info" class="inline w-3 h-3"></i> 留言將公開顯示，請勿填寫個資</span>
+                    <button type="submit" class="bg-amber-600 text-white px-8 py-3 rounded-xl text-sm font-bold hover:bg-amber-700 transition-colors shadow-md flex items-center gap-2">
+                        送出提問 <i data-lucide="send" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </form>
+
+            <div class="max-w-3xl mx-auto">
+                <h3 class="font-bold text-lg mb-6 border-b border-stone-100 pb-2">歷史問答</h3>
+                <div id="qa-list">
+                    <!-- 問答內容動態載入 -->
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 購物車側邊欄與遮罩 -->
+    <div id="cart-overlay" class="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-40 hidden" onclick="toggleCart()"></div>
+    <div id="cart-panel" class="fixed top-0 right-0 h-full w-full max-w-md bg-white z-50 shadow-2xl translate-x-full transition-transform duration-300 flex flex-col">
+        <div class="p-6 border-b border-stone-100 flex justify-between items-center bg-stone-50">
+            <h3 class="text-xl font-bold flex items-center gap-2">
+                <i data-lucide="shopping-cart" class="w-5 h-5 text-amber-600"></i> 購物車
+            </h3>
+            <button onclick="toggleCart()" class="text-stone-400 hover:text-stone-900 bg-white p-2 rounded-full shadow-sm"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <div id="cart-items" class="flex-1 overflow-y-auto p-6 bg-stone-50/50">
+            <!-- 購物車品項 -->
+        </div>
+        <div class="p-6 border-t border-stone-100 bg-white">
+            <div class="flex justify-between items-center mb-6">
+                <span class="text-stone-500 font-medium">總計金額</span>
+                <span class="text-2xl font-bold text-stone-900">$<span id="cart-total">0</span></span>
+            </div>
+            <button id="checkout-btn" onclick="checkout()" class="w-full bg-stone-900 text-white py-4 rounded-xl font-bold hover:bg-amber-600 transition-colors shadow-lg flex justify-center items-center gap-2">
+                前往結帳 <i data-lucide="arrow-right" class="w-4 h-4"></i>
+            </button>
+            <p class="text-center text-xs text-stone-400 mt-4">結帳需登入 Google 帳號以保障權益</p>
+        </div>
+    </div>
+
+    <footer class="bg-stone-900 text-stone-400 py-8 text-center text-sm">
+        <p>© 2026 子珍甜點 Zizhen Sweets. All rights reserved.</p>
+    </footer>
+
+</body>
+</html>
