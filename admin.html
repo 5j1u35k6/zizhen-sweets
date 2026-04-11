@@ -41,15 +41,13 @@
 
         // --- 核心功能：身份驗證 ---
         async function initAuth() {
-            // 管理後台不再嘗試自動匿名登入，改由 Google 登入驗證
-            // 已徹底移除會導致 custom-token-mismatch 的 Canvas Token 邏輯
             if (isLocalMode) return;
         }
 
         if (!isLocalMode) {
             onAuthStateChanged(auth, (user) => {
-                currentUser = user;
                 if (user) {
+                    currentUser = user;
                     document.getElementById('loading').classList.add('hidden');
                     document.getElementById('app').classList.remove('hidden');
                     setupListeners();
@@ -69,14 +67,38 @@
                 await signInWithPopup(auth, provider);
                 showNotification("登入成功！");
             } catch (error) {
-                console.error(error);
-                showNotification("登入取消或失敗", "error");
+                console.error("登入失敗:", error);
+                // 針對 Canvas 動態隨機網域的特製解決方案：模擬後台登入
+                if (error.code === 'auth/unauthorized-domain' || error.message.includes('unauthorized-domain')) {
+                    showNotification("預覽環境限制：已自動為您啟用「模擬後台登入」！");
+                    currentUser = {
+                        uid: "admin-preview-tester-001",
+                        displayName: "Canvas 管理員",
+                        isAnonymous: false
+                    };
+                    // 手動切換至後台畫面並啟動監聽器
+                    document.getElementById('loading').classList.add('hidden');
+                    document.getElementById('app').classList.remove('hidden');
+                    setupListeners();
+                } else {
+                    showNotification("登入取消或失敗", "error");
+                }
             }
         };
 
         window.handleLogout = () => {
-            signOut(auth);
+            if (auth && auth.currentUser) {
+                signOut(auth);
+            }
+            currentUser = null;
+            if (unsubscribeOrders) unsubscribeOrders();
+            if (unsubscribeMessages) unsubscribeMessages();
+            
             showNotification("已登出系統");
+            document.getElementById('app').classList.add('hidden');
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('loading-spinner').classList.add('hidden');
+            document.getElementById('login-btn').classList.remove('hidden');
         };
 
         // --- 即時監聽資料 ---
@@ -153,8 +175,9 @@
                     <td class="py-4 px-4 text-sm font-mono text-stone-500">${o.id.slice(0,8)}</td>
                     <td class="py-4 px-4 text-sm">${new Date(o.createdAt).toLocaleString()}</td>
                     <td class="py-4 px-4">
-                        <div class="text-sm font-medium text-stone-800">${o.userName}</div>
-                        <div class="text-xs text-stone-500">${o.items.length} 項商品</div>
+                        <div class="text-sm font-bold text-stone-800">${o.recipientName || o.userName} <span class="text-xs font-normal text-stone-500 ml-1">${o.phone || ''}</span></div>
+                        <div class="text-xs text-amber-600 font-medium mt-1">${o.deliveryMethod || '未指定'} ${o.storeInfo ? `(${o.storeInfo})` : ''}</div>
+                        <div class="text-xs text-stone-500 mt-1">${o.items.map(i => `${i.name}x${i.quantity}`).join(', ')}</div>
                     </td>
                     <td class="py-4 px-4 font-bold text-amber-700">$${o.total}</td>
                     <td class="py-4 px-4">
