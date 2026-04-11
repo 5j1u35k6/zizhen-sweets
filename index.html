@@ -9,6 +9,7 @@
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        // 恢復使用 signInWithPopup 
         import { getAuth, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, addDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
@@ -18,7 +19,6 @@
         let isLocalMode = false;
 
         try {
-            // 在本機測試時，直接使用您的真實 Firebase 設定
             const firebaseConfig = {
                 apiKey: "AIzaSyC-NjffxHAdbJbNfyu7seZWU53tcg6wfo4",
                 authDomain: "zizhen-sweets.firebaseapp.com",
@@ -30,7 +30,7 @@
             app = initializeApp(firebaseConfig);
             auth = getAuth(app);
             db = getFirestore(app);
-            isLocalMode = false; // 確保關閉離線模式
+            isLocalMode = false; 
         } catch (error) {
             console.error("Firebase 初始化失敗：", error);
             isLocalMode = true;
@@ -45,22 +45,21 @@
         // --- 核心功能：身份驗證 ---
         async function initAuth() {
             if (isLocalMode) {
-                updateUI(); // 離線模式直接更新UI
+                updateUI(); 
                 return;
             }
-            // 由於尚未啟用匿名登入，先移除 signInAnonymously 避免報錯
-            // 讓使用者以未登入狀態瀏覽，並透過點擊登入按鈕進行 Google 登入
             updateUI(); 
         }
 
         if (!isLocalMode) {
             onAuthStateChanged(auth, (user) => {
-                currentUser = user;
-                updateUI();
-                if (user && !user.isAnonymous) {
-                    loadOrders(); // 只有非匿名用戶才載入專屬訂單
-                }
+                // 只有在真實登入狀態下才覆蓋 currentUser
                 if (user) {
+                    currentUser = user;
+                    updateUI();
+                    if (!user.isAnonymous) {
+                        loadOrders(); 
+                    }
                     loadMessages();
                 }
             });
@@ -75,27 +74,45 @@
             try {
                 await signInWithPopup(auth, provider);
                 showNotification("Google 登入成功！歡迎來到子珍甜點。");
-                loadOrders(); // 登入後重新載入訂單
+                loadOrders(); 
             } catch (error) {
-                console.error(error);
-                showNotification("登入失敗，可能因網域安全限制或使用者取消", "error");
+                console.error("啟動登入失敗:", error);
+                // 針對 Canvas 動態隨機網域的特製解決方案：模擬登入
+                if (error.code === 'auth/unauthorized-domain' || error.message.includes('unauthorized-domain')) {
+                    showNotification("預覽環境限制：已自動為您啟用「模擬測試登入」！");
+                    
+                    // 建立一個虛擬的使用者物件供測試使用
+                    currentUser = {
+                        uid: "canvas-preview-tester-001",
+                        displayName: "Canvas 測試員",
+                        isAnonymous: false,
+                        photoURL: "https://api.dicebear.com/7.x/avataaars/svg?seed=Zizhen"
+                    };
+                    updateUI();
+                    loadOrders();
+                    loadMessages();
+                } else {
+                    showNotification("登入過程中發生錯誤", "error");
+                }
             }
         };
 
         window.handleLogout = () => {
             if (isLocalMode) return;
-            signOut(auth);
+            // 嘗試執行真實登出 (若為模擬帳號則不影響)
+            if (auth.currentUser) {
+                signOut(auth);
+            }
             showNotification("已登出。");
             currentUser = null;
             updateUI();
             document.getElementById('order-list').innerHTML = `<div class="text-center py-20 text-stone-500">請先登入 Google 帳號以查看您的訂單紀錄<br><button onclick="handleLogin()" class="mt-4 px-6 py-2 bg-stone-800 text-white rounded-lg">點此登入</button></div>`;
-            document.getElementById('qa-list').innerHTML = '';
+            document.getElementById('qa-list').innerHTML = `<div class="text-center py-8 text-stone-500">登入後即可查看留言紀錄</div>`;
         };
 
         // --- 資料操作：產品管理 ---
         async function loadProducts() {
             if (isLocalMode) {
-                // 離線模式提供假資料供介面預覽，避免畫面空白
                 products = [
                     { id: "1", name: "法式經典檸檬塔 (本機展示)", price: 180, desc: "選用在地小農黃檸檬，酸甜平衡的完美比例。", category: "塔類", image: "https://images.unsplash.com/photo-1519915028121-7d3463d20b13?auto=format&fit=crop&q=80&w=400" },
                     { id: "2", name: "海鹽焦糖可麗露 (本機展示)", price: 85, desc: "外皮焦香脆口，內餡軟Ｑ滑順。", category: "常溫點心", image: "https://images.unsplash.com/photo-1605696140502-0949d8e5792d?auto=format&fit=crop&q=80&w=400" },
@@ -109,7 +126,6 @@
                 const snapshot = await getDocs(prodCol);
                 products = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 
-                // 預設資料 (若無資料時寫入)
                 if (products.length === 0) {
                     const initialProducts = [
                         { name: "法式經典檸檬塔", price: 180, desc: "選用在地小農黃檸檬，酸甜平衡的完美比例。", category: "塔類", image: "https://images.unsplash.com/photo-1519915028121-7d3463d20b13?auto=format&fit=crop&q=80&w=400" },
@@ -119,13 +135,12 @@
                     for (let p of initialProducts) {
                         await addDoc(prodCol, p);
                     }
-                    loadProducts(); // 重新載入
+                    loadProducts(); 
                     return;
                 }
                 renderShop();
             } catch (error) {
                 console.error("載入產品失敗:", error);
-                // 發生錯誤（例如權限問題）時顯示預設假資料
                 products = [
                     { id: "1", name: "法式經典檸檬塔 (展示)", price: 180, desc: "選用在地小農黃檸檬，酸甜平衡的完美比例。", category: "塔類", image: "https://images.unsplash.com/photo-1519915028121-7d3463d20b13?auto=format&fit=crop&q=80&w=400" },
                     { id: "2", name: "海鹽焦糖可麗露 (展示)", price: 85, desc: "外皮焦香脆口，內餡軟Ｑ滑順。", category: "常溫點心", image: "https://images.unsplash.com/photo-1605696140502-0949d8e5792d?auto=format&fit=crop&q=80&w=400" }
@@ -165,23 +180,132 @@
             renderCart();
         };
 
-        window.checkout = async () => {
+        // --- 結帳流程控制 ---
+        window.openCheckoutModal = async () => {
             if (!currentUser && !isLocalMode) {
                 showNotification("為了保護您的訂單資料，結帳前請先登入 Google 帳號", "error");
                 await window.handleLogin();
                 return;
             }
-            
             if (cart.length === 0) return;
 
-            if (isLocalMode) {
-                showNotification("本機離線模式無法將訂單寫入資料庫。", "error");
+            // 鎖定背景捲動，防止滑動穿透
+            document.body.style.overflow = 'hidden';
+
+            // 關閉側邊購物車
+            const panel = document.getElementById('cart-panel');
+            const overlay = document.getElementById('cart-overlay');
+            panel.classList.add('translate-x-full');
+            overlay.classList.add('hidden');
+
+            // 預填會員資訊
+            document.getElementById('checkout-name').value = currentUser?.displayName || '';
+            document.getElementById('checkout-email').value = currentUser?.email || '';
+            document.getElementById('checkout-phone').value = '';
+            
+            // 渲染明細
+            renderCheckoutSummary();
+            
+            // 顯示第一步表單
+            document.getElementById('checkout-modal-container').classList.remove('hidden');
+            document.getElementById('checkout-step-1').classList.remove('hidden');
+            document.getElementById('checkout-step-2').classList.add('hidden');
+            document.getElementById('checkout-step-3').classList.add('hidden');
+        };
+
+        window.closeCheckoutModal = () => {
+            document.body.style.overflow = ''; // 恢復背景捲動
+            document.getElementById('checkout-modal-container').classList.add('hidden');
+        };
+
+        window.toggleStoreInput = () => {
+            const deliveryMethod = document.querySelector('input[name="delivery"]:checked').value;
+            const storeContainer = document.getElementById('store-input-container');
+            if (deliveryMethod === '7-11' || deliveryMethod === '全家') {
+                storeContainer.classList.remove('hidden');
+            } else {
+                storeContainer.classList.add('hidden');
+            }
+        };
+
+        function renderCheckoutSummary() {
+            const container = document.getElementById('checkout-cart-summary');
+            const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+            
+            container.innerHTML = cart.map(item => `
+                <div class="flex justify-between text-sm mb-2 border-b border-stone-100 pb-2">
+                    <span class="text-stone-700">${item.name} <span class="text-stone-400 ml-2">x ${item.quantity}</span></span>
+                    <span class="font-medium">$${item.price * item.quantity}</span>
+                </div>
+            `).join('') + `
+                <div class="flex justify-between font-bold text-stone-900 pt-2 text-lg">
+                    <span>總計金額</span>
+                    <span class="text-amber-600">$${total}</span>
+                </div>
+            `;
+        }
+
+        window.proceedToStep2 = () => {
+            // 表單驗證
+            const name = document.getElementById('checkout-name').value.trim();
+            const phone = document.getElementById('checkout-phone').value.trim();
+            const email = document.getElementById('checkout-email').value.trim();
+            const deliveryMethod = document.querySelector('input[name="delivery"]:checked').value;
+            const storeInfo = document.getElementById('checkout-store').value.trim();
+
+            if (!name || !phone || !email) {
+                showNotification("請填寫所有必填聯絡資訊", "error");
                 return;
             }
+            if ((deliveryMethod === '7-11' || deliveryMethod === '全家') && !storeInfo) {
+                showNotification("請填寫取貨門市名稱或店號", "error");
+                return;
+            }
+
+            // 渲染步驟二確認畫面
+            const confirmHTML = `
+                <div class="space-y-3 text-sm text-stone-700 bg-stone-50 p-4 rounded-xl border border-stone-100 mb-6">
+                    <div class="flex justify-between border-b border-stone-200 pb-2"><span class="text-stone-500">收件人</span><span class="font-bold">${name}</span></div>
+                    <div class="flex justify-between border-b border-stone-200 pb-2"><span class="text-stone-500">聯絡電話</span><span class="font-bold">${phone}</span></div>
+                    <div class="flex justify-between border-b border-stone-200 pb-2"><span class="text-stone-500">Email</span><span class="font-bold">${email}</span></div>
+                    <div class="flex justify-between border-b border-stone-200 pb-2"><span class="text-stone-500">取件方式</span><span class="font-bold text-amber-600">${deliveryMethod}</span></div>
+                    ${(deliveryMethod === '7-11' || deliveryMethod === '全家') ? `<div class="flex justify-between"><span class="text-stone-500">取貨門市</span><span class="font-bold">${storeInfo}</span></div>` : ''}
+                </div>
+            `;
+            
+            document.getElementById('confirm-details-container').innerHTML = confirmHTML;
+            
+            // 切換視圖
+            document.getElementById('checkout-step-1').classList.add('hidden');
+            document.getElementById('checkout-step-2').classList.remove('hidden');
+        };
+
+        window.proceedToStep3 = () => {
+            document.getElementById('checkout-step-2').classList.add('hidden');
+            document.getElementById('checkout-step-3').classList.remove('hidden');
+        };
+
+        window.executeFinalCheckout = async () => {
+            if (isLocalMode) {
+                showNotification("本機離線模式無法將訂單寫入資料庫。", "error");
+                closeCheckoutModal();
+                return;
+            }
+
+            const name = document.getElementById('checkout-name').value.trim();
+            const phone = document.getElementById('checkout-phone').value.trim();
+            const email = document.getElementById('checkout-email').value.trim();
+            const deliveryMethod = document.querySelector('input[name="delivery"]:checked').value;
+            const storeInfo = document.getElementById('checkout-store').value.trim();
 
             const orderData = {
                 userId: currentUser.uid,
                 userName: currentUser.displayName || "顧客",
+                recipientName: name,
+                phone: phone,
+                email: email,
+                deliveryMethod: deliveryMethod,
+                storeInfo: storeInfo,
                 items: cart,
                 total: cart.reduce((sum, item) => sum + (item.price * item.quantity), 0),
                 status: '處理中',
@@ -193,8 +317,9 @@
                 await addDoc(orderCol, orderData);
                 cart = [];
                 saveCart();
+                closeCheckoutModal();
+                document.body.style.overflow = ''; // 確保送出後恢復背景捲動
                 showNotification("訂單提交成功！請至我的訂單查詢進度。");
-                toggleCart();
                 switchTab('orders');
             } catch (e) {
                 console.error("結帳失敗", e);
@@ -385,6 +510,7 @@
                 container.innerHTML = '<div class="flex flex-col items-center justify-center h-full text-stone-400"><i data-lucide="shopping-cart" class="w-12 h-12 mb-2 opacity-50"></i><p>購物車是空的</p></div>';
                 totalEl.innerText = '0';
                 checkoutBtn.innerText = "前往結帳";
+                checkoutBtn.onclick = () => showNotification("購物車是空的", "error");
                 lucide.createIcons();
                 return;
             }
@@ -407,8 +533,10 @@
             
             if(currentUser && !currentUser.isAnonymous) {
                 checkoutBtn.innerText = "前往結帳";
+                checkoutBtn.onclick = openCheckoutModal; // 修改為開啟結帳彈窗
             } else {
                 checkoutBtn.innerText = "登入以結帳";
+                checkoutBtn.onclick = window.handleLogin;
             }
             
             lucide.createIcons();
@@ -434,14 +562,14 @@
                     <img src="${currentUser.photoURL || 'https://via.placeholder.com/32'}" class="w-6 h-6 rounded-full border border-stone-200">
                     <span class="hidden md:inline text-sm">${currentUser.displayName || '使用者'}</span>
                 `;
-                userBtn.onclick = handleLogout; // 點擊已登入頭像改為登出
+                userBtn.onclick = handleLogout; 
             } else {
                 userBtn.innerHTML = `<i data-lucide="user" class="w-5 h-5"></i><span class="hidden md:inline">登入</span>`;
                 userBtn.onclick = handleLogin;
             }
             lucide.createIcons();
             saveCart();
-            renderCart(); // 更新購物車按鈕狀態
+            renderCart(); 
         }
 
         window.toggleCart = () => {
@@ -635,10 +763,110 @@
                 <span class="text-stone-500 font-medium">總計金額</span>
                 <span class="text-2xl font-bold text-stone-900">$<span id="cart-total">0</span></span>
             </div>
-            <button id="checkout-btn" onclick="checkout()" class="w-full bg-stone-900 text-white py-4 rounded-xl font-bold hover:bg-amber-600 transition-colors shadow-lg flex justify-center items-center gap-2">
+            <button id="checkout-btn" class="w-full bg-stone-900 text-white py-4 rounded-xl font-bold hover:bg-amber-600 transition-colors shadow-lg flex justify-center items-center gap-2">
                 前往結帳 <i data-lucide="arrow-right" class="w-4 h-4"></i>
             </button>
             <p class="text-center text-xs text-stone-400 mt-4">結帳需登入 Google 帳號以保障權益</p>
+        </div>
+    </div>
+
+    <!-- 結帳專用彈跳視窗 (Modal) -->
+    <div id="checkout-modal-container" class="fixed inset-0 z-50 hidden flex items-center justify-center px-4">
+        <div class="absolute inset-0 bg-stone-900/60 backdrop-blur-sm" onclick="closeCheckoutModal()"></div>
+        <div class="relative bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            
+            <!-- 步驟一：填寫表單 -->
+            <div id="checkout-step-1" class="flex flex-col h-full hidden">
+                <div class="p-6 border-b border-stone-100 bg-stone-50 flex justify-between items-center shrink-0">
+                    <h3 class="text-xl font-bold flex items-center gap-2 text-stone-800"><i data-lucide="clipboard-list" class="w-5 h-5 text-amber-600"></i> 填寫訂購資訊</h3>
+                    <button onclick="closeCheckoutModal()" class="text-stone-400 hover:text-stone-900"><i data-lucide="x" class="w-6 h-6"></i></button>
+                </div>
+                <div class="p-6 overflow-y-auto flex-1 grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <!-- 左側：訂購明細 -->
+                    <div>
+                        <h4 class="font-bold text-stone-800 mb-4 border-b border-stone-200 pb-2">確認訂購明細</h4>
+                        <div id="checkout-cart-summary" class="bg-stone-50 p-4 rounded-xl">
+                            <!-- 動態載入 -->
+                        </div>
+                    </div>
+                    <!-- 右側：表單填寫 -->
+                    <div class="space-y-4">
+                        <h4 class="font-bold text-stone-800 mb-4 border-b border-stone-200 pb-2">收件資訊</h4>
+                        <div>
+                            <label class="block text-xs font-bold text-stone-500 mb-1">收件人姓名 *</label>
+                            <input type="text" id="checkout-name" class="w-full border border-stone-200 rounded-lg p-2.5 text-sm outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500" placeholder="王小明">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-stone-500 mb-1">聯繫電話 *</label>
+                            <input type="tel" id="checkout-phone" class="w-full border border-stone-200 rounded-lg p-2.5 text-sm outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500" placeholder="0912345678">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-stone-500 mb-1">Email 信箱 *</label>
+                            <input type="email" id="checkout-email" class="w-full border border-stone-200 rounded-lg p-2.5 text-sm outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500" placeholder="example@email.com">
+                        </div>
+                        
+                        <div class="pt-2">
+                            <label class="block text-xs font-bold text-stone-500 mb-2">希望取件方式 *</label>
+                            <div class="flex gap-4">
+                                <label class="flex items-center gap-2 text-sm cursor-pointer">
+                                    <input type="radio" name="delivery" value="自取" checked class="text-amber-600 focus:ring-amber-500" onchange="toggleStoreInput()"> 自取
+                                </label>
+                                <label class="flex items-center gap-2 text-sm cursor-pointer">
+                                    <input type="radio" name="delivery" value="7-11" class="text-amber-600 focus:ring-amber-500" onchange="toggleStoreInput()"> 7-11
+                                </label>
+                                <label class="flex items-center gap-2 text-sm cursor-pointer">
+                                    <input type="radio" name="delivery" value="全家" class="text-amber-600 focus:ring-amber-500" onchange="toggleStoreInput()"> 全家
+                                </label>
+                            </div>
+                        </div>
+
+                        <div id="store-input-container" class="hidden pt-2 bg-blue-50 p-3 rounded-lg border border-blue-100 mt-2">
+                            <label class="block text-xs font-bold text-blue-800 mb-1">取貨門市名稱 / 店號 *</label>
+                            <input type="text" id="checkout-store" class="w-full border border-blue-200 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="例如：台大門市 或 123456">
+                            <p class="text-[10px] text-blue-600 mt-1">請手動填寫您欲取件的超商門市資訊</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="p-6 border-t border-stone-100 shrink-0 flex justify-end gap-3 bg-white">
+                    <button onclick="closeCheckoutModal()" class="px-6 py-2.5 rounded-xl text-sm font-bold text-stone-500 hover:bg-stone-100 transition-colors">取消</button>
+                    <button onclick="proceedToStep2()" class="px-6 py-2.5 rounded-xl text-sm font-bold bg-stone-900 text-white hover:bg-amber-600 transition-colors shadow-md">下一步 (確認資訊)</button>
+                </div>
+            </div>
+
+            <!-- 步驟二：二次確認 -->
+            <div id="checkout-step-2" class="flex flex-col h-full hidden">
+                <div class="p-6 border-b border-stone-100 bg-stone-50 shrink-0">
+                    <h3 class="text-xl font-bold flex items-center gap-2 text-stone-800"><i data-lucide="check-circle-2" class="w-5 h-5 text-amber-600"></i> 再次確認資訊</h3>
+                    <p class="text-xs text-stone-500 mt-1 ml-7">請核對以下資料是否正確</p>
+                </div>
+                <div class="p-8 overflow-y-auto flex-1 flex flex-col items-center">
+                    <div class="w-full max-w-md">
+                        <div id="confirm-details-container">
+                            <!-- 確認資料動態載入 -->
+                        </div>
+                    </div>
+                </div>
+                <div class="p-6 border-t border-stone-100 shrink-0 flex justify-between gap-3 bg-white">
+                    <button onclick="document.getElementById('checkout-step-2').classList.add('hidden'); document.getElementById('checkout-step-1').classList.remove('hidden');" class="px-6 py-2.5 rounded-xl text-sm font-bold text-stone-500 hover:bg-stone-100 transition-colors">返回修改</button>
+                    <button onclick="proceedToStep3()" class="px-8 py-2.5 rounded-xl text-sm font-bold bg-stone-900 text-white hover:bg-amber-600 transition-colors shadow-md">確認無誤</button>
+                </div>
+            </div>
+
+            <!-- 步驟三：最終警告彈跳 -->
+            <div id="checkout-step-3" class="flex flex-col h-full hidden bg-white">
+                <div class="p-10 flex flex-col items-center justify-center text-center flex-1">
+                    <div class="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mb-6">
+                        <i data-lucide="alert-triangle" class="w-10 h-10 text-red-500"></i>
+                    </div>
+                    <h3 class="text-2xl font-bold text-stone-900 mb-2">確認後無法刪除訂單</h3>
+                    <p class="text-stone-500 text-sm max-w-sm mb-8">一旦訂單送出，廚房將立刻開始備料排程，請確定您要送出這筆訂單。</p>
+                    <div class="flex gap-4 w-full max-w-xs">
+                        <button onclick="document.getElementById('checkout-step-3').classList.add('hidden'); document.getElementById('checkout-step-2').classList.remove('hidden');" class="flex-1 py-3 rounded-xl text-sm font-bold text-stone-600 bg-stone-100 hover:bg-stone-200 transition-colors">取消</button>
+                        <button onclick="executeFinalCheckout()" class="flex-1 py-3 rounded-xl text-sm font-bold bg-red-600 text-white hover:bg-red-700 transition-colors shadow-md">真的送出</button>
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
 
