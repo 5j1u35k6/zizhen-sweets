@@ -9,9 +9,10 @@
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        // 恢復使用 signInWithPopup 
+        // 改回使用穩定的 signInWithPopup 解決手機瀏覽器的 missing initial state 錯誤
         import { getAuth, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, addDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        // 匯入 setDoc 與 updateDoc 以支援自訂訂單編號與扣庫存
+        import { getFirestore, collection, doc, addDoc, getDocs, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- 配置與初始化 ---
         let app, auth, db;
@@ -77,23 +78,7 @@
                 loadOrders(); 
             } catch (error) {
                 console.error("啟動登入失敗:", error);
-                // 針對 Canvas 動態隨機網域的特製解決方案：模擬登入
-                if (error.code === 'auth/unauthorized-domain' || error.message.includes('unauthorized-domain')) {
-                    showNotification("預覽環境限制：已自動為您啟用「模擬測試登入」！");
-                    
-                    // 建立一個虛擬的使用者物件供測試使用
-                    currentUser = {
-                        uid: "canvas-preview-tester-001",
-                        displayName: "Canvas 測試員",
-                        isAnonymous: false,
-                        photoURL: "https://api.dicebear.com/7.x/avataaars/svg?seed=Zizhen"
-                    };
-                    updateUI();
-                    loadOrders();
-                    loadMessages();
-                } else {
-                    showNotification("登入過程中發生錯誤", "error");
-                }
+                showNotification("登入取消或發生錯誤", "error");
             }
         };
 
@@ -155,6 +140,14 @@
             const product = products.find(p => p.id === productId);
             if (product) {
                 const existing = cart.find(item => item.id === productId);
+                const currentCartQty = existing ? existing.quantity : 0;
+                
+                // 加入庫存檢查防呆
+                if (product.stock !== undefined && currentCartQty >= product.stock) {
+                    showNotification(`此商品庫存不足，目前僅剩 ${product.stock} 件`, "error");
+                    return;
+                }
+
                 if (existing) {
                     existing.quantity += 1;
                 } else {
@@ -314,12 +307,40 @@
 
             try {
                 const orderCol = collection(db, 'artifacts', appId, 'public', 'data', 'orders');
-                await addDoc(orderCol, orderData);
+                
+                // --- 1. 產生自訂訂單編號 (YYYYMMDDXXX) ---
+                const snapshot = await getDocs(orderCol);
+                const todayStr = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '');
+                
+                let maxSeq = 0;
+                snapshot.forEach(docSnap => {
+                    const id = docSnap.id;
+                    if (id.startsWith(todayStr)) {
+                        const seq = parseInt(id.slice(-3), 10);
+                        if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+                    }
+                });
+                
+                // 組合新的流水號
+                const newSeq = String(maxSeq + 1).padStart(3, '0');
+                const customOrderId = `${todayStr}${newSeq}`;
+
+                // 使用 setDoc 寫入帶有指定編號的訂單
+                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', customOrderId), orderData);
+                
+                // --- 2. 同步扣除商品庫存 ---
+                for (let item of cart) {
+                    if (item.stock !== undefined) {
+                        const newStock = Math.max(0, item.stock - item.quantity);
+                        const prodRef = doc(db, 'artifacts', appId, 'public', 'data', 'products', item.id);
+                        await updateDoc(prodRef, { stock: newStock });
+                    }
+                }
+
                 cart = [];
                 saveCart();
                 closeCheckoutModal();
-                document.body.style.overflow = ''; // 確保送出後恢復背景捲動
-                showNotification("訂單提交成功！請至我的訂單查詢進度。");
+                showNotification(`訂單提交成功！您的訂單編號為：${customOrderId}`);
                 switchTab('orders');
             } catch (e) {
                 console.error("結帳失敗", e);
@@ -393,7 +414,9 @@
 
         function renderShop() {
             const container = document.getElementById('product-grid');
-            container.innerHTML = products.map(p => `
+            container.innerHTML = products.map(p => {
+                const isOutOfStock = p.stock !== undefined && p.stock <= 0;
+                return `
                 <div class="bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow border border-stone-100">
                     <img src="${p.image}" class="w-full h-48 object-cover" alt="${p.name}">
                     <div class="p-4">
@@ -401,13 +424,20 @@
                             <h3 class="font-bold text-stone-800">${p.name}</h3>
                             <span class="text-amber-600 font-medium">$${p.price}</span>
                         </div>
-                        <p class="text-sm text-stone-500 mb-4 h-10 overflow-hidden">${p.desc}</p>
-                        <button onclick="addToCart('${p.id}')" class="w-full bg-stone-800 text-white py-2 rounded-lg hover:bg-stone-700 transition-colors flex items-center justify-center gap-2">
-                            <i data-lucide="shopping-cart" class="w-4 h-4"></i> 加入購物車
+                        <p class="text-sm text-stone-500 mb-2 h-10 overflow-hidden">${p.desc}</p>
+                        ${p.ingredients ? `<p class="text-xs text-stone-400 mb-3 truncate" title="${p.ingredients}">成分：${p.ingredients}</p>` : '<div class="mb-3 h-4"></div>'}
+                        
+                        <div class="flex justify-between items-center mb-4 text-xs font-bold ${isOutOfStock ? 'text-red-500' : 'text-stone-500'}">
+                            <span>剩餘數量：${p.stock !== undefined ? p.stock : '充足'}</span>
+                        </div>
+                        
+                        <button onclick="addToCart('${p.id}')" ${isOutOfStock ? 'disabled' : ''} class="w-full ${isOutOfStock ? 'bg-stone-300 cursor-not-allowed' : 'bg-stone-800 hover:bg-stone-700'} text-white py-2 rounded-lg transition-colors flex items-center justify-center gap-2">
+                            <i data-lucide="shopping-cart" class="w-4 h-4"></i> ${isOutOfStock ? '售完補貨中' : '加入購物車'}
                         </button>
                     </div>
                 </div>
-            `).join('');
+                `;
+            }).join('');
             lucide.createIcons();
         }
 
