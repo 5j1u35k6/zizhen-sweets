@@ -10,7 +10,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, getDocs, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, getDocs, updateDoc, onSnapshot, addDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- 配置與初始化 ---
         let app, auth, db;
@@ -38,6 +38,8 @@
         let currentUser = null;
         let unsubscribeOrders = null;
         let unsubscribeMessages = null;
+        let unsubscribeProducts = null;
+        let productsData = [];
 
         // --- 核心功能：身份驗證 ---
         async function initAuth() {
@@ -52,7 +54,6 @@
                     document.getElementById('app').classList.remove('hidden');
                     setupListeners();
                 } else {
-                    // 若未登入，顯示登入按鈕
                     document.getElementById('app').classList.add('hidden');
                     document.getElementById('loading').classList.remove('hidden');
                     document.getElementById('loading-spinner').classList.add('hidden');
@@ -68,7 +69,6 @@
                 showNotification("登入成功！");
             } catch (error) {
                 console.error("登入失敗:", error);
-                // 針對 Canvas 動態隨機網域的特製解決方案：模擬後台登入
                 if (error.code === 'auth/unauthorized-domain' || error.message.includes('unauthorized-domain')) {
                     showNotification("預覽環境限制：已自動為您啟用「模擬後台登入」！");
                     currentUser = {
@@ -76,12 +76,11 @@
                         displayName: "Canvas 管理員",
                         isAnonymous: false
                     };
-                    // 手動切換至後台畫面並啟動監聽器
                     document.getElementById('loading').classList.add('hidden');
                     document.getElementById('app').classList.remove('hidden');
                     setupListeners();
                 } else {
-                    showNotification("登入取消或失敗", "error");
+                    showNotification("登入取消或發生錯誤，請稍後再試", "error");
                 }
             }
         };
@@ -93,6 +92,7 @@
             currentUser = null;
             if (unsubscribeOrders) unsubscribeOrders();
             if (unsubscribeMessages) unsubscribeMessages();
+            if (unsubscribeProducts) unsubscribeProducts();
             
             showNotification("已登出系統");
             document.getElementById('app').classList.add('hidden');
@@ -105,6 +105,7 @@
         function setupListeners() {
             if (unsubscribeOrders) unsubscribeOrders();
             if (unsubscribeMessages) unsubscribeMessages();
+            if (unsubscribeProducts) unsubscribeProducts();
 
             const ordersCol = collection(db, 'artifacts', appId, 'public', 'data', 'orders');
             unsubscribeOrders = onSnapshot(ordersCol, (snapshot) => {
@@ -120,14 +121,20 @@
                                      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
                 renderMessages(msgs);
             }, (error) => console.error(error));
+
+            const prodsCol = collection(db, 'artifacts', appId, 'public', 'data', 'products');
+            unsubscribeProducts = onSnapshot(prodsCol, (snapshot) => {
+                productsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderProducts();
+            }, (error) => console.error(error));
         }
 
-        // --- 操作功能 ---
+        // --- 操作功能：訂單與問答 ---
         window.updateOrderStatus = async (orderId, newStatus) => {
             try {
                 const orderRef = doc(db, 'artifacts', appId, 'public', 'data', 'orders', orderId);
                 await updateDoc(orderRef, { status: newStatus });
-                showNotification(`訂單 ${orderId.slice(0,5)} 狀態已更新為：${newStatus}`);
+                showNotification(`訂單狀態已更新為：${newStatus}`);
             } catch(e) {
                 showNotification("狀態更新失敗", "error");
             }
@@ -141,11 +148,7 @@
         window.submitReply = async (msgId) => {
             const textarea = document.getElementById(`reply-text-${msgId}`);
             const replyContent = textarea.value.trim();
-            
-            if (!replyContent) {
-                showNotification("回覆內容不能為空", "error");
-                return;
-            }
+            if (!replyContent) return showNotification("回覆內容不能為空", "error");
 
             try {
                 const msgRef = doc(db, 'artifacts', appId, 'public', 'data', 'messages', msgId);
@@ -153,6 +156,72 @@
                 showNotification("回覆已送出！");
             } catch (e) {
                 showNotification("回覆失敗", "error");
+            }
+        };
+
+        // --- 操作功能：商品管理 ---
+        window.openProductModal = (id = null) => {
+            document.getElementById('product-modal').classList.remove('hidden');
+            const form = document.getElementById('product-form');
+            form.reset();
+            
+            if (id) {
+                document.getElementById('modal-title').innerText = '編輯商品';
+                const p = productsData.find(prod => prod.id === id);
+                document.getElementById('prod-id').value = p.id;
+                document.getElementById('prod-name').value = p.name;
+                document.getElementById('prod-category').value = p.category;
+                document.getElementById('prod-price').value = p.price;
+                document.getElementById('prod-stock').value = p.stock !== undefined ? p.stock : 10;
+                document.getElementById('prod-ingredients').value = p.ingredients || '';
+                document.getElementById('prod-desc').value = p.desc || '';
+                document.getElementById('prod-image').value = p.image || '';
+            } else {
+                document.getElementById('modal-title').innerText = '新增商品';
+                document.getElementById('prod-id').value = '';
+            }
+        };
+
+        window.closeProductModal = () => {
+            document.getElementById('product-modal').classList.add('hidden');
+        };
+
+        window.saveProduct = async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('prod-id').value;
+            const prodData = {
+                name: document.getElementById('prod-name').value.trim(),
+                category: document.getElementById('prod-category').value.trim(),
+                price: Number(document.getElementById('prod-price').value),
+                stock: Number(document.getElementById('prod-stock').value),
+                ingredients: document.getElementById('prod-ingredients').value.trim(),
+                desc: document.getElementById('prod-desc').value.trim(),
+                image: document.getElementById('prod-image').value.trim() || 'https://images.unsplash.com/photo-1551024601-bec78aea704b?w=400&q=80'
+            };
+
+            try {
+                if (id) {
+                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', id), prodData);
+                    showNotification("商品更新成功！");
+                } else {
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'products'), prodData);
+                    showNotification("新商品上架成功！");
+                }
+                closeProductModal();
+            } catch (error) {
+                console.error(error);
+                showNotification("儲存失敗", "error");
+            }
+        };
+
+        window.deleteProduct = async (id) => {
+            if (!confirm('確定要刪除這個商品嗎？此動作無法復原。')) return;
+            try {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', id));
+                showNotification("商品已刪除");
+            } catch (error) {
+                console.error(error);
+                showNotification("刪除失敗", "error");
             }
         };
 
@@ -172,7 +241,7 @@
             }
             tbody.innerHTML = orders.map(o => `
                 <tr class="border-b border-stone-100 hover:bg-stone-50 transition-colors">
-                    <td class="py-4 px-4 text-sm font-mono text-stone-500">${o.id.slice(0,8)}</td>
+                    <td class="py-4 px-4 text-sm font-mono text-stone-700 font-bold">${o.id}</td>
                     <td class="py-4 px-4 text-sm">${new Date(o.createdAt).toLocaleString()}</td>
                     <td class="py-4 px-4">
                         <div class="text-sm font-bold text-stone-800">${o.recipientName || o.userName} <span class="text-xs font-normal text-stone-500 ml-1">${o.phone || ''}</span></div>
@@ -189,6 +258,39 @@
                     </td>
                 </tr>
             `).join('');
+        }
+
+        function renderProducts() {
+            const tbody = document.getElementById('admin-products');
+            if (productsData.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-stone-400">目前尚無商品</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = productsData.map(p => `
+                <tr class="border-b border-stone-100 hover:bg-stone-50 transition-colors">
+                    <td class="py-3 px-4">
+                        <div class="flex items-center gap-3">
+                            <img src="${p.image}" class="w-10 h-10 rounded-lg object-cover border border-stone-200">
+                            <div>
+                                <div class="font-bold text-stone-800 text-sm">${p.name}</div>
+                                <div class="text-xs text-stone-400">${p.category}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="py-3 px-4 text-sm text-stone-600 max-w-[150px] truncate" title="${p.ingredients || '無設定'}">${p.ingredients || '-'}</td>
+                    <td class="py-3 px-4 text-sm font-bold text-amber-600">$${p.price}</td>
+                    <td class="py-3 px-4">
+                        <span class="px-2 py-1 rounded-md text-xs font-bold ${p.stock <= 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}">
+                            ${p.stock !== undefined ? p.stock : '充足'}
+                        </span>
+                    </td>
+                    <td class="py-3 px-4 text-right space-x-2">
+                        <button onclick="openProductModal('${p.id}')" class="text-blue-500 hover:text-blue-700 p-1"><i data-lucide="edit" class="w-4 h-4"></i></button>
+                        <button onclick="deleteProduct('${p.id}')" class="text-red-400 hover:text-red-600 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                    </td>
+                </tr>
+            `).join('');
+            lucide.createIcons();
         }
 
         function renderMessages(msgs) {
@@ -252,6 +354,7 @@
         window.switchTab = (tab) => {
             document.getElementById('view-orders').classList.add('hidden');
             document.getElementById('view-messages').classList.add('hidden');
+            document.getElementById('view-products').classList.add('hidden');
             document.getElementById(`view-${tab}`).classList.remove('hidden');
             
             document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -320,6 +423,10 @@
                     <button id="btn-orders" onclick="switchTab('orders')" class="tab-btn w-full flex items-center px-4 py-3 bg-stone-800 text-white rounded-xl transition-colors text-sm font-medium">
                         <i data-lucide="shopping-bag" class="w-5 h-5 mr-3 opacity-80"></i>
                         訂單管理
+                    </button>
+                    <button id="btn-products" onclick="switchTab('products')" class="tab-btn w-full flex items-center px-4 py-3 text-stone-500 hover:bg-stone-100 rounded-xl transition-colors text-sm font-medium">
+                        <i data-lucide="package" class="w-5 h-5 mr-3 opacity-80"></i>
+                        商品管理
                     </button>
                     <button id="btn-messages" onclick="switchTab('messages')" class="tab-btn w-full flex items-center px-4 py-3 text-stone-500 hover:bg-stone-100 rounded-xl transition-colors text-sm font-medium">
                         <i data-lucide="message-square" class="w-5 h-5 mr-3 opacity-80"></i>
@@ -400,6 +507,34 @@
                         </div>
                     </div>
 
+                    <!-- Products View -->
+                    <div id="view-products" class="hidden p-0">
+                        <div class="p-6 border-b border-stone-100 bg-stone-50/50 flex justify-between items-center">
+                            <h3 class="font-bold text-lg flex items-center gap-2">
+                                <i data-lucide="package" class="w-5 h-5 text-stone-500"></i> 前台商品管理
+                            </h3>
+                            <button onclick="openProductModal()" class="bg-stone-900 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-stone-800 flex items-center gap-2">
+                                <i data-lucide="plus" class="w-4 h-4"></i> 新增商品
+                            </button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left">
+                                <thead class="bg-white border-b border-stone-200">
+                                    <tr class="text-xs text-stone-400 uppercase tracking-wider">
+                                        <th class="py-4 px-4 font-medium">商品名稱</th>
+                                        <th class="py-4 px-4 font-medium">主要成分</th>
+                                        <th class="py-4 px-4 font-medium">售價</th>
+                                        <th class="py-4 px-4 font-medium">剩餘數量</th>
+                                        <th class="py-4 px-4 font-medium text-right">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-products">
+                                    <!-- 動態載入商品 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
                     <!-- Messages View -->
                     <div id="view-messages" class="hidden p-0">
                         <div class="p-6 border-b border-stone-100 bg-stone-50/50 flex justify-between items-center">
@@ -418,6 +553,61 @@
 
             </div>
         </main>
+    </div>
+
+    <!-- 新增/編輯商品彈跳視窗 (Modal) -->
+    <div id="product-modal" class="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center px-4">
+        <div class="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="p-6 border-b border-stone-100 bg-stone-50 flex justify-between items-center shrink-0">
+                <h3 id="modal-title" class="text-xl font-bold flex items-center gap-2 text-stone-800">新增商品</h3>
+                <button type="button" onclick="closeProductModal()" class="text-stone-400 hover:text-stone-900"><i data-lucide="x" class="w-6 h-6"></i></button>
+            </div>
+            <form id="product-form" onsubmit="saveProduct(event)" class="p-6 overflow-y-auto space-y-4 flex-1">
+                <input type="hidden" id="prod-id">
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-stone-500 mb-1">商品名稱 *</label>
+                        <input type="text" id="prod-name" required class="w-full border border-stone-200 rounded-lg p-2.5 text-sm outline-none focus:border-amber-500" placeholder="例如：法式檸檬塔">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-stone-500 mb-1">商品分類 *</label>
+                        <input type="text" id="prod-category" required class="w-full border border-stone-200 rounded-lg p-2.5 text-sm outline-none focus:border-amber-500" placeholder="例如：塔類">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-stone-500 mb-1">售價 (NT$) *</label>
+                        <input type="number" id="prod-price" required min="0" class="w-full border border-stone-200 rounded-lg p-2.5 text-sm outline-none focus:border-amber-500" placeholder="180">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-stone-500 mb-1">剩餘庫存數量 *</label>
+                        <input type="number" id="prod-stock" required min="0" value="10" class="w-full border border-stone-200 rounded-lg p-2.5 text-sm outline-none focus:border-amber-500" placeholder="10">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-stone-500 mb-1">主要成分</label>
+                    <input type="text" id="prod-ingredients" class="w-full border border-stone-200 rounded-lg p-2.5 text-sm outline-none focus:border-amber-500" placeholder="例如：法國發酵奶油、小農雞蛋、杏仁粉">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-stone-500 mb-1">商品介紹 *</label>
+                    <textarea id="prod-desc" required rows="3" class="w-full border border-stone-200 rounded-lg p-2.5 text-sm outline-none focus:border-amber-500 resize-none" placeholder="描述一下這個甜點的口感與特色..."></textarea>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-stone-500 mb-1">圖片網址 (可留空使用預設圖)</label>
+                    <input type="url" id="prod-image" class="w-full border border-stone-200 rounded-lg p-2.5 text-sm outline-none focus:border-amber-500" placeholder="https://...">
+                </div>
+
+                <div class="pt-4 flex justify-end gap-3 border-t border-stone-100">
+                    <button type="button" onclick="closeProductModal()" class="px-5 py-2 rounded-xl text-sm font-bold text-stone-500 hover:bg-stone-100 transition-colors">取消</button>
+                    <button type="submit" class="px-5 py-2 rounded-xl text-sm font-bold bg-amber-600 text-white hover:bg-amber-700 transition-colors shadow-md">儲存商品</button>
+                </div>
+            </form>
+        </div>
     </div>
 
 </body>
