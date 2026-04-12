@@ -9,9 +9,7 @@
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        // 改回使用穩定的 signInWithPopup 解決手機瀏覽器的 missing initial state 錯誤
         import { getAuth, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        // 匯入 setDoc 與 updateDoc 以支援自訂訂單編號與扣庫存
         import { getFirestore, collection, doc, addDoc, getDocs, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- 配置與初始化 ---
@@ -42,6 +40,7 @@
         let cart = JSON.parse(localStorage.getItem('zizhen_cart')) || [];
         let activeTab = 'home';
         let products = [];
+        let currentCategory = '全部商品'; // 預設分類
 
         // --- 核心功能：身份驗證 ---
         async function initAuth() {
@@ -54,7 +53,6 @@
 
         if (!isLocalMode) {
             onAuthStateChanged(auth, (user) => {
-                // 只有在真實登入狀態下才覆蓋 currentUser
                 if (user) {
                     currentUser = user;
                     updateUI();
@@ -84,7 +82,6 @@
 
         window.handleLogout = () => {
             if (isLocalMode) return;
-            // 嘗試執行真實登出 (若為模擬帳號則不影響)
             if (auth.currentUser) {
                 signOut(auth);
             }
@@ -95,13 +92,13 @@
             document.getElementById('qa-list').innerHTML = `<div class="text-center py-8 text-stone-500">登入後即可查看留言紀錄</div>`;
         };
 
-        // --- 資料操作：產品管理 ---
+        // --- 資料操作：產品管理與篩選 ---
         async function loadProducts() {
             if (isLocalMode) {
                 products = [
-                    { id: "1", name: "法式經典檸檬塔 (本機展示)", price: 180, desc: "選用在地小農黃檸檬，酸甜平衡的完美比例。", category: "塔類", image: "https://images.unsplash.com/photo-1519915028121-7d3463d20b13?auto=format&fit=crop&q=80&w=400" },
-                    { id: "2", name: "海鹽焦糖可麗露 (本機展示)", price: 85, desc: "外皮焦香脆口，內餡軟Ｑ滑順。", category: "常溫點心", image: "https://images.unsplash.com/photo-1605696140502-0949d8e5792d?auto=format&fit=crop&q=80&w=400" },
-                    { id: "3", name: "宇治抹茶千層蛋糕 (本機展示)", price: 220, desc: "日本進口小山園抹茶粉，層層堆疊的濃郁茶香。", category: "蛋糕", image: "https://images.unsplash.com/photo-1582760904350-f949c869e901?auto=format&fit=crop&q=80&w=400" }
+                    { id: "1", name: "法式經典檸檬塔 (展示)", price: 180, desc: "選用在地小農黃檸檬，酸甜平衡的完美比例。", category: "塔類", stock: 10, image: "https://images.unsplash.com/photo-1519915028121-7d3463d20b13?auto=format&fit=crop&q=80&w=400" },
+                    { id: "2", name: "海鹽焦糖可麗露 (展示)", price: 85, desc: "外皮焦香脆口，內餡軟Ｑ滑順。", category: "常溫點心", stock: 5, image: "https://images.unsplash.com/photo-1605696140502-0949d8e5792d?auto=format&fit=crop&q=80&w=400" },
+                    { id: "3", name: "宇治抹茶千層蛋糕 (展示)", price: 220, desc: "日本進口小山園抹茶粉，層層堆疊的濃郁茶香。", category: "蛋糕", stock: 0, image: "https://images.unsplash.com/photo-1582760904350-f949c869e901?auto=format&fit=crop&q=80&w=400" }
                 ];
                 renderShop();
                 return;
@@ -110,30 +107,27 @@
                 const prodCol = collection(db, 'artifacts', appId, 'public', 'data', 'products');
                 const snapshot = await getDocs(prodCol);
                 products = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                
-                if (products.length === 0) {
-                    const initialProducts = [
-                        { name: "法式經典檸檬塔", price: 180, desc: "選用在地小農黃檸檬，酸甜平衡的完美比例。", category: "塔類", image: "https://images.unsplash.com/photo-1519915028121-7d3463d20b13?auto=format&fit=crop&q=80&w=400" },
-                        { name: "海鹽焦糖可麗露", price: 85, desc: "外皮焦香脆口，內餡軟Ｑ滑順。", category: "常溫點心", image: "https://images.unsplash.com/photo-1605696140502-0949d8e5792d?auto=format&fit=crop&q=80&w=400" },
-                        { name: "宇治抹茶千層蛋糕", price: 220, desc: "日本進口小山園抹茶粉，層層堆疊的濃郁茶香。", category: "蛋糕", image: "https://images.unsplash.com/photo-1582760904350-f949c869e901?auto=format&fit=crop&q=80&w=400" }
-                    ];
-                    for (let p of initialProducts) {
-                        await addDoc(prodCol, p);
-                    }
-                    loadProducts(); 
-                    return;
-                }
                 renderShop();
             } catch (error) {
                 console.error("載入產品失敗:", error);
-                products = [
-                    { id: "1", name: "法式經典檸檬塔 (展示)", price: 180, desc: "選用在地小農黃檸檬，酸甜平衡的完美比例。", category: "塔類", image: "https://images.unsplash.com/photo-1519915028121-7d3463d20b13?auto=format&fit=crop&q=80&w=400" },
-                    { id: "2", name: "海鹽焦糖可麗露 (展示)", price: 85, desc: "外皮焦香脆口，內餡軟Ｑ滑順。", category: "常溫點心", image: "https://images.unsplash.com/photo-1605696140502-0949d8e5792d?auto=format&fit=crop&q=80&w=400" }
-                ];
-                renderShop();
-                showNotification("無法連線至資料庫，顯示展示商品。", "error");
+                showNotification("無法連線至資料庫載入商品", "error");
             }
         }
+
+        window.filterProducts = (category, btnElement) => {
+            currentCategory = category;
+            
+            // 更新按鈕樣式
+            const buttons = document.getElementById('category-filters').querySelectorAll('button');
+            buttons.forEach(btn => {
+                btn.classList.remove('bg-stone-800', 'text-white');
+                btn.classList.add('bg-stone-100', 'text-stone-600', 'hover:bg-stone-200');
+            });
+            btnElement.classList.remove('bg-stone-100', 'text-stone-600', 'hover:bg-stone-200');
+            btnElement.classList.add('bg-stone-800', 'text-white');
+
+            renderShop();
+        };
 
         // --- 購物車功能 ---
         window.addToCart = (productId) => {
@@ -142,7 +136,6 @@
                 const existing = cart.find(item => item.id === productId);
                 const currentCartQty = existing ? existing.quantity : 0;
                 
-                // 加入庫存檢查防呆
                 if (product.stock !== undefined && currentCartQty >= product.stock) {
                     showNotification(`此商品庫存不足，目前僅剩 ${product.stock} 件`, "error");
                     return;
@@ -182,24 +175,18 @@
             }
             if (cart.length === 0) return;
 
-            // 鎖定背景捲動，防止滑動穿透
             document.body.style.overflow = 'hidden';
-
-            // 關閉側邊購物車
             const panel = document.getElementById('cart-panel');
             const overlay = document.getElementById('cart-overlay');
             panel.classList.add('translate-x-full');
             overlay.classList.add('hidden');
 
-            // 預填會員資訊
             document.getElementById('checkout-name').value = currentUser?.displayName || '';
             document.getElementById('checkout-email').value = currentUser?.email || '';
             document.getElementById('checkout-phone').value = '';
             
-            // 渲染明細
             renderCheckoutSummary();
             
-            // 顯示第一步表單
             document.getElementById('checkout-modal-container').classList.remove('hidden');
             document.getElementById('checkout-step-1').classList.remove('hidden');
             document.getElementById('checkout-step-2').classList.add('hidden');
@@ -207,7 +194,7 @@
         };
 
         window.closeCheckoutModal = () => {
-            document.body.style.overflow = ''; // 恢復背景捲動
+            document.body.style.overflow = '';
             document.getElementById('checkout-modal-container').classList.add('hidden');
         };
 
@@ -239,7 +226,6 @@
         }
 
         window.proceedToStep2 = () => {
-            // 表單驗證
             const name = document.getElementById('checkout-name').value.trim();
             const phone = document.getElementById('checkout-phone').value.trim();
             const email = document.getElementById('checkout-email').value.trim();
@@ -255,7 +241,6 @@
                 return;
             }
 
-            // 渲染步驟二確認畫面
             const confirmHTML = `
                 <div class="space-y-3 text-sm text-stone-700 bg-stone-50 p-4 rounded-xl border border-stone-100 mb-6">
                     <div class="flex justify-between border-b border-stone-200 pb-2"><span class="text-stone-500">收件人</span><span class="font-bold">${name}</span></div>
@@ -267,8 +252,6 @@
             `;
             
             document.getElementById('confirm-details-container').innerHTML = confirmHTML;
-            
-            // 切換視圖
             document.getElementById('checkout-step-1').classList.add('hidden');
             document.getElementById('checkout-step-2').classList.remove('hidden');
         };
@@ -308,7 +291,7 @@
             try {
                 const orderCol = collection(db, 'artifacts', appId, 'public', 'data', 'orders');
                 
-                // --- 1. 產生自訂訂單編號 (YYYYMMDDXXX) ---
+                // 產生自訂訂單編號 YYYYMMDDXXX
                 const snapshot = await getDocs(orderCol);
                 const todayStr = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '');
                 
@@ -321,14 +304,12 @@
                     }
                 });
                 
-                // 組合新的流水號
                 const newSeq = String(maxSeq + 1).padStart(3, '0');
                 const customOrderId = `${todayStr}${newSeq}`;
 
-                // 使用 setDoc 寫入帶有指定編號的訂單
                 await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', customOrderId), orderData);
                 
-                // --- 2. 同步扣除商品庫存 ---
+                // 扣除庫存
                 for (let item of cart) {
                     if (item.stock !== undefined) {
                         const newStock = Math.max(0, item.stock - item.quantity);
@@ -414,24 +395,35 @@
 
         function renderShop() {
             const container = document.getElementById('product-grid');
-            container.innerHTML = products.map(p => {
+            
+            // 根據當前選擇的分類進行過濾
+            const displayProducts = currentCategory === '全部商品' 
+                ? products 
+                : products.filter(p => p.category === currentCategory);
+
+            if (displayProducts.length === 0) {
+                container.innerHTML = '<div class="col-span-full py-16 text-center text-stone-400 font-medium bg-stone-50 rounded-2xl border border-stone-100">此分類目前沒有商品喔！</div>';
+                return;
+            }
+
+            container.innerHTML = displayProducts.map(p => {
                 const isOutOfStock = p.stock !== undefined && p.stock <= 0;
                 return `
-                <div class="bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow border border-stone-100">
+                <div class="bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow border border-stone-100 flex flex-col">
                     <img src="${p.image}" class="w-full h-48 object-cover" alt="${p.name}">
-                    <div class="p-4">
+                    <div class="p-4 flex-1 flex flex-col">
                         <div class="flex justify-between items-start mb-2">
                             <h3 class="font-bold text-stone-800">${p.name}</h3>
-                            <span class="text-amber-600 font-medium">$${p.price}</span>
+                            <span class="text-amber-600 font-medium whitespace-nowrap ml-2">$${p.price}</span>
                         </div>
-                        <p class="text-sm text-stone-500 mb-2 h-10 overflow-hidden">${p.desc}</p>
+                        <p class="text-sm text-stone-500 mb-2 flex-1">${p.desc}</p>
                         ${p.ingredients ? `<p class="text-xs text-stone-400 mb-3 truncate" title="${p.ingredients}">成分：${p.ingredients}</p>` : '<div class="mb-3 h-4"></div>'}
                         
                         <div class="flex justify-between items-center mb-4 text-xs font-bold ${isOutOfStock ? 'text-red-500' : 'text-stone-500'}">
                             <span>剩餘數量：${p.stock !== undefined ? p.stock : '充足'}</span>
                         </div>
                         
-                        <button onclick="addToCart('${p.id}')" ${isOutOfStock ? 'disabled' : ''} class="w-full ${isOutOfStock ? 'bg-stone-300 cursor-not-allowed' : 'bg-stone-800 hover:bg-stone-700'} text-white py-2 rounded-lg transition-colors flex items-center justify-center gap-2">
+                        <button onclick="addToCart('${p.id}')" ${isOutOfStock ? 'disabled' : ''} class="w-full mt-auto ${isOutOfStock ? 'bg-stone-300 cursor-not-allowed' : 'bg-stone-800 hover:bg-stone-700'} text-white py-2 rounded-lg transition-colors flex items-center justify-center gap-2">
                             <i data-lucide="shopping-cart" class="w-4 h-4"></i> ${isOutOfStock ? '售完補貨中' : '加入購物車'}
                         </button>
                     </div>
@@ -465,7 +457,7 @@
                     <div class="bg-white p-6 rounded-xl border border-stone-100 mb-4 shadow-sm">
                         <div class="flex justify-between items-center mb-4">
                             <div>
-                                <span class="text-xs text-stone-400 font-mono">訂單編號: ${o.id}</span>
+                                <span class="text-xs text-stone-400 font-mono font-bold">訂單編號: ${o.id}</span>
                                 <div class="text-sm text-stone-500">${new Date(o.createdAt).toLocaleString()}</div>
                             </div>
                             <span class="px-3 py-1 rounded-full text-xs font-medium ${o.status === '處理中' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}">${o.status}</span>
@@ -563,7 +555,7 @@
             
             if(currentUser && !currentUser.isAnonymous) {
                 checkoutBtn.innerText = "前往結帳";
-                checkoutBtn.onclick = openCheckoutModal; // 修改為開啟結帳彈窗
+                checkoutBtn.onclick = openCheckoutModal; 
             } else {
                 checkoutBtn.innerText = "登入以結帳";
                 checkoutBtn.onclick = window.handleLogin;
@@ -680,7 +672,7 @@
             <div class="hero-gradient h-[60vh] flex flex-col items-center justify-center text-center px-4">
                 <span class="px-4 py-1 bg-white/80 rounded-full text-xs font-bold tracking-wider text-amber-700 mb-4 border border-amber-200">HANDCRAFTED DESSERTS</span>
                 <h2 class="text-4xl md:text-6xl font-bold text-stone-900 mb-6 tracking-tight drop-shadow-sm">尋找生活中的那一抹甜</h2>
-                <p class="text-stone-700 max-w-lg mb-8 bg-white/50 p-4 rounded-xl backdrop-blur-sm">子珍甜點堅持選用頂級食材，每一份甜點都是一份對生活的熱愛與堅持。在這裡，您能找到撫慰心靈的甜蜜滋味。</p>
+                <p class="text-stone-700 max-w-lg mb-8 bg-white/50 p-4 rounded-xl backdrop-blur-sm">堅持自己挑食材，每一份甜點都是最用心、最投入、最熱愛的堅持，希望您能找到撫慰心靈的甜蜜時光</p>
                 <button onclick="switchTab('shop')" class="bg-stone-900 text-white px-8 py-3.5 rounded-full hover:bg-amber-600 transition-colors shadow-lg flex items-center gap-2">
                     立即挑選 <i data-lucide="arrow-right" class="w-4 h-4"></i>
                 </button>
@@ -696,22 +688,22 @@
                         <div class="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-6 text-amber-600 transform rotate-3">
                             <i data-lucide="award" class="w-8 h-8"></i>
                         </div>
-                        <h4 class="font-bold mb-3 text-lg">高品質原料</h4>
-                        <p class="text-sm text-stone-500 leading-relaxed">嚴選法國發酵奶油與日本進口麵粉，堅持無添加，確保每一口的純粹與香濃。</p>
+                        <h4 class="font-bold mb-3 text-lg">自己吃的，最安心</h4>
+                        <p class="text-sm text-stone-500 leading-relaxed">堅持每一份甜點都是自己完成，無添加任何防腐劑，確保每一口的純粹與香濃。</p>
                     </div>
                     <div class="text-center p-6 bg-white rounded-3xl shadow-sm border border-stone-50 hover:-translate-y-1 transition-transform">
                         <div class="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-6 text-amber-600 transform -rotate-3">
                             <i data-lucide="truck" class="w-8 h-8"></i>
                         </div>
-                        <h4 class="font-bold mb-3 text-lg">冷藏新鮮配送</h4>
-                        <p class="text-sm text-stone-500 leading-relaxed">專業溫控物流，接單後製作，將最新鮮的手作風味完好無缺地直送到您的家門口。</p>
+                        <h4 class="font-bold mb-3 text-lg">你要吃的，最新鮮</h4>
+                        <p class="text-sm text-stone-500 leading-relaxed">製作完成後無論是宅配、店到店、自取，最新鮮的手作風味完好無缺地直送到你的手中。</p>
                     </div>
                     <div class="text-center p-6 bg-white rounded-3xl shadow-sm border border-stone-50 hover:-translate-y-1 transition-transform">
                         <div class="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-6 text-amber-600 transform rotate-3">
                             <i data-lucide="heart" class="w-8 h-8"></i>
                         </div>
-                        <h4 class="font-bold mb-3 text-lg">客製化服務</h4>
-                        <p class="text-sm text-stone-500 leading-relaxed">無論是慶生、紀念日還是企業禮盒，我們都能為您量身打造專屬的甜蜜時刻。</p>
+                        <h4 class="font-bold mb-3 text-lg">獻給獨一無二的你，最特別</h4>
+                        <p class="text-sm text-stone-500 leading-relaxed">想要減糖？多一點甜蜜？沒問題！下單後請留言給我，我來幫你！</p>
                     </div>
                 </div>
             </div>
@@ -724,11 +716,12 @@
                     <h2 class="text-3xl font-bold text-stone-900 mb-2">甜點目錄</h2>
                     <p class="text-stone-500">挑選您喜愛的法式經典與手作甜品</p>
                 </div>
-                <div class="flex gap-2 overflow-x-auto pb-2 md:pb-0 w-full md:w-auto">
-                    <button class="whitespace-nowrap px-5 py-2 text-sm rounded-full bg-stone-800 text-white transition-colors">全部商品</button>
-                    <button class="whitespace-nowrap px-5 py-2 text-sm rounded-full bg-stone-100 text-stone-600 hover:bg-stone-200 transition-colors">塔類</button>
-                    <button class="whitespace-nowrap px-5 py-2 text-sm rounded-full bg-stone-100 text-stone-600 hover:bg-stone-200 transition-colors">蛋糕</button>
-                    <button class="whitespace-nowrap px-5 py-2 text-sm rounded-full bg-stone-100 text-stone-600 hover:bg-stone-200 transition-colors">常溫點心</button>
+                <!-- 綁定過濾功能的分類按鈕 -->
+                <div id="category-filters" class="flex gap-2 overflow-x-auto pb-2 md:pb-0 w-full md:w-auto">
+                    <button onclick="filterProducts('全部商品', this)" class="whitespace-nowrap px-5 py-2 text-sm rounded-full bg-stone-800 text-white transition-colors">全部商品</button>
+                    <button onclick="filterProducts('塔類', this)" class="whitespace-nowrap px-5 py-2 text-sm rounded-full bg-stone-100 text-stone-600 hover:bg-stone-200 transition-colors">塔類</button>
+                    <button onclick="filterProducts('蛋糕', this)" class="whitespace-nowrap px-5 py-2 text-sm rounded-full bg-stone-100 text-stone-600 hover:bg-stone-200 transition-colors">蛋糕</button>
+                    <button onclick="filterProducts('常溫點心', this)" class="whitespace-nowrap px-5 py-2 text-sm rounded-full bg-stone-100 text-stone-600 hover:bg-stone-200 transition-colors">常溫點心</button>
                 </div>
             </div>
 
