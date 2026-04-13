@@ -141,6 +141,18 @@
             }
         };
 
+        window.deleteOrder = async (orderId) => {
+            if (!confirm('確定要刪除/取消此訂單嗎？操作後顧客端也會顯示已刪除。')) return;
+            try {
+                const orderRef = doc(db, 'artifacts', appId, 'public', 'data', 'orders', orderId);
+                // 採用「軟刪除」標記狀態，保留歷史紀錄
+                await updateDoc(orderRef, { status: '已刪除' });
+                showNotification(`訂單 ${orderId} 已標記為刪除`);
+            } catch(e) {
+                showNotification("刪除訂單失敗", "error");
+            }
+        };
+
         window.toggleReplyInput = (msgId) => {
             const inputDiv = document.getElementById(`reply-input-${msgId}`);
             inputDiv.classList.toggle('hidden');
@@ -323,25 +335,32 @@
                 tbody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-stone-400">目前尚無訂單</td></tr>`;
                 return;
             }
-            tbody.innerHTML = orders.map(o => `
-                <tr class="border-b border-stone-100 hover:bg-stone-50 transition-colors">
-                    <td class="py-4 px-4 text-sm font-mono text-stone-700 font-bold">${o.id}</td>
-                    <td class="py-4 px-4 text-sm">${new Date(o.createdAt).toLocaleString()}</td>
-                    <td class="py-4 px-4">
+            tbody.innerHTML = orders.map(o => {
+                const isDeleted = o.status === '已刪除';
+                return `
+                <tr class="border-b ${isDeleted ? 'bg-red-50 border-red-100' : 'border-stone-100 hover:bg-stone-50'} transition-colors">
+                    <td class="py-4 px-4 text-sm font-mono ${isDeleted ? 'text-red-400 line-through' : 'text-stone-700 font-bold'}">${o.id}</td>
+                    <td class="py-4 px-4 text-sm ${isDeleted ? 'text-red-400' : ''}">${new Date(o.createdAt).toLocaleString()}</td>
+                    <td class="py-4 px-4 ${isDeleted ? 'opacity-60' : ''}">
                         <div class="text-sm font-bold text-stone-800">${o.recipientName || o.userName} <span class="text-xs font-normal text-stone-500 ml-1">${o.phone || ''}</span></div>
                         <div class="text-xs text-amber-600 font-medium mt-1">${o.deliveryMethod || '未指定'} ${o.storeInfo ? `(${o.storeInfo})` : ''}</div>
                         <div class="text-xs text-stone-500 mt-1">${o.items.map(i => `${i.name}x${i.quantity}`).join(', ')}</div>
                     </td>
-                    <td class="py-4 px-4 font-bold text-amber-700">$${o.total}</td>
+                    <td class="py-4 px-4 font-bold ${isDeleted ? 'text-red-500 line-through' : 'text-amber-700'}">$${o.total}</td>
                     <td class="py-4 px-4">
-                        <select onchange="updateOrderStatus('${o.id}', this.value)" class="text-sm bg-white border border-stone-200 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer ${o.status==='處理中'?'text-blue-600':o.status==='已出貨'?'text-orange-500':'text-green-600'}">
-                            <option value="處理中" ${o.status==='處理中'?'selected':''}>處理中</option>
-                            <option value="已出貨" ${o.status==='已出貨'?'selected':''}>已出貨</option>
-                            <option value="已完成" ${o.status==='已完成'?'selected':''}>已完成</option>
-                        </select>
+                        <div class="flex items-center gap-2">
+                            <select onchange="updateOrderStatus('${o.id}', this.value)" ${isDeleted ? 'disabled' : ''} class="text-sm bg-white border border-stone-200 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer ${isDeleted ? 'text-red-600 bg-red-100' : (o.status==='處理中'?'text-blue-600':o.status==='已出貨'?'text-orange-500':'text-green-600')}">
+                                <option value="處理中" ${o.status==='處理中'?'selected':''}>處理中</option>
+                                <option value="已出貨" ${o.status==='已出貨'?'selected':''}>已出貨</option>
+                                <option value="已完成" ${o.status==='已完成'?'selected':''}>已完成</option>
+                                ${isDeleted ? `<option value="已刪除" selected>已刪除</option>` : ''}
+                            </select>
+                            ${!isDeleted ? `<button onclick="deleteOrder('${o.id}')" class="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="刪除訂單"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : ''}
+                        </div>
                     </td>
                 </tr>
-            `).join('');
+            `}).join('');
+            lucide.createIcons();
         }
 
         function renderProducts() {
