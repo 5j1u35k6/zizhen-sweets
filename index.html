@@ -120,7 +120,6 @@
 
         function renderCategoryFilters() {
             const container = document.getElementById('category-filters');
-            // 抓取所有商品的不重複分類，並過濾掉空值
             const uniqueCategories = [...new Set(products.map(p => p.category).filter(Boolean))];
             const allCategories = ['全部商品', ...uniqueCategories];
 
@@ -135,8 +134,8 @@
 
         window.filterProducts = (category) => {
             currentCategory = category;
-            renderCategoryFilters(); // 更新按鈕的選取狀態
-            renderShop();            // 更新商品列表
+            renderCategoryFilters(); 
+            renderShop();            
         };
 
         // --- 商品詳細資訊彈窗 (Modal) ---
@@ -246,7 +245,8 @@
             document.getElementById('checkout-email').value = currentUser?.email || '';
             document.getElementById('checkout-phone').value = '';
             
-            renderCheckoutSummary();
+            // 初始化表單狀態 (付款方式與運費)
+            updateCheckoutForm();
             
             document.getElementById('checkout-modal-container').classList.remove('hidden');
             document.getElementById('checkout-step-1').classList.remove('hidden');
@@ -259,31 +259,83 @@
             document.getElementById('checkout-modal-container').classList.add('hidden');
         };
 
-        window.toggleStoreInput = () => {
+        window.updateCheckoutForm = () => {
             const deliveryMethod = document.querySelector('input[name="delivery"]:checked').value;
             const storeContainer = document.getElementById('store-input-container');
+            const link711 = document.getElementById('link-711');
+            const linkFamily = document.getElementById('link-family');
+            const paymentContainer = document.getElementById('payment-options-container');
+
+            // 處理門市輸入框與地圖連結的顯示
             if (deliveryMethod === '7-11' || deliveryMethod === '全家') {
                 storeContainer.classList.remove('hidden');
+                if (deliveryMethod === '7-11') {
+                    link711.classList.remove('hidden');
+                    linkFamily.classList.add('hidden');
+                } else {
+                    link711.classList.add('hidden');
+                    linkFamily.classList.remove('hidden');
+                }
+                
+                // 超商付款方式
+                paymentContainer.innerHTML = `
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="radio" name="payment" value="取貨付款" checked class="text-amber-600 focus:ring-amber-500"> 取貨付款
+                    </label>
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="radio" name="payment" value="取貨不付款" class="text-amber-600 focus:ring-amber-500"> 取貨不付款 (需先匯款)
+                    </label>
+                `;
             } else {
                 storeContainer.classList.add('hidden');
+                
+                // 自取付款方式
+                paymentContainer.innerHTML = `
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="radio" name="payment" value="取貨付款(現金)" checked class="text-amber-600 focus:ring-amber-500"> 取貨付款(現金)
+                    </label>
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="radio" name="payment" value="轉帳" class="text-amber-600 focus:ring-amber-500"> 轉帳
+                    </label>
+                `;
             }
+            
+            // 更新總金額明細 (包含運費)
+            renderCheckoutSummary();
         };
 
         function renderCheckoutSummary() {
             const container = document.getElementById('checkout-cart-summary');
-            const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+            const deliveryMethod = document.querySelector('input[name="delivery"]:checked')?.value || '自取';
+            const shippingFee = (deliveryMethod === '7-11' || deliveryMethod === '全家') ? 60 : 0;
+            const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+            const total = subtotal + shippingFee;
             
-            container.innerHTML = cart.map(item => `
+            let html = cart.map(item => `
                 <div class="flex justify-between text-sm mb-2 border-b border-stone-100 pb-2">
                     <span class="text-stone-700">${item.name} <span class="text-stone-400 ml-2">x ${item.quantity}</span></span>
                     <span class="font-medium">$${item.price * item.quantity}</span>
                 </div>
-            `).join('') + `
+            `).join('');
+
+            // 如果有運費，單獨列出一行
+            if (shippingFee > 0) {
+                html += `
+                <div class="flex justify-between text-sm mb-2 border-b border-stone-100 pb-2">
+                    <span class="text-stone-500">超商寄件處理費</span>
+                    <span class="font-medium text-stone-500">$${shippingFee}</span>
+                </div>
+                `;
+            }
+
+            html += `
                 <div class="flex justify-between font-bold text-stone-900 pt-2 text-lg">
                     <span>總計金額</span>
                     <span class="text-amber-600">$${total}</span>
                 </div>
             `;
+            
+            container.innerHTML = html;
         }
 
         window.proceedToStep2 = () => {
@@ -291,6 +343,7 @@
             const phone = document.getElementById('checkout-phone').value.trim();
             const email = document.getElementById('checkout-email').value.trim();
             const deliveryMethod = document.querySelector('input[name="delivery"]:checked').value;
+            const paymentMethod = document.querySelector('input[name="payment"]:checked').value;
             const storeInfo = document.getElementById('checkout-store').value.trim();
 
             if (!name || !phone || !email) {
@@ -308,7 +361,8 @@
                     <div class="flex justify-between border-b border-stone-200 pb-2"><span class="text-stone-500">聯絡電話</span><span class="font-bold">${phone}</span></div>
                     <div class="flex justify-between border-b border-stone-200 pb-2"><span class="text-stone-500">Email</span><span class="font-bold">${email}</span></div>
                     <div class="flex justify-between border-b border-stone-200 pb-2"><span class="text-stone-500">取件方式</span><span class="font-bold text-amber-600">${deliveryMethod}</span></div>
-                    ${(deliveryMethod === '7-11' || deliveryMethod === '全家') ? `<div class="flex justify-between"><span class="text-stone-500">取貨門市</span><span class="font-bold">${storeInfo}</span></div>` : ''}
+                    ${(deliveryMethod === '7-11' || deliveryMethod === '全家') ? `<div class="flex justify-between border-b border-stone-200 pb-2"><span class="text-stone-500">取貨門市</span><span class="font-bold">${storeInfo}</span></div>` : ''}
+                    <div class="flex justify-between"><span class="text-stone-500">付款方式</span><span class="font-bold text-amber-600">${paymentMethod}</span></div>
                 </div>
             `;
             
@@ -333,7 +387,11 @@
             const phone = document.getElementById('checkout-phone').value.trim();
             const email = document.getElementById('checkout-email').value.trim();
             const deliveryMethod = document.querySelector('input[name="delivery"]:checked').value;
+            const paymentMethod = document.querySelector('input[name="payment"]:checked').value;
             const storeInfo = document.getElementById('checkout-store').value.trim();
+            
+            const shippingFee = (deliveryMethod === '7-11' || deliveryMethod === '全家') ? 60 : 0;
+            const cartSubtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
             const orderData = {
                 userId: currentUser.uid,
@@ -342,9 +400,11 @@
                 phone: phone,
                 email: email,
                 deliveryMethod: deliveryMethod,
+                paymentMethod: paymentMethod,
                 storeInfo: storeInfo,
+                shippingFee: shippingFee,
                 items: cart,
-                total: cart.reduce((sum, item) => sum + (item.price * item.quantity), 0),
+                total: cartSubtotal + shippingFee,
                 status: '處理中',
                 createdAt: new Date().toISOString()
             };
@@ -466,7 +526,6 @@
                 return;
             }
 
-            // 修改此處：為整個卡片加上 cursor-pointer 與點擊事件，並確保加入購物車按鈕能阻擋事件冒泡
             container.innerHTML = displayProducts.map(p => {
                 const isOutOfStock = p.stock !== undefined && p.stock <= 0;
                 return `
@@ -525,6 +584,7 @@
                             <div>
                                 <span class="text-xs ${isDeleted ? 'text-red-500' : 'text-stone-400'} font-mono font-bold">訂單編號: ${o.id}</span>
                                 <div class="text-sm text-stone-500">${new Date(o.createdAt).toLocaleString()}</div>
+                                <div class="text-xs text-amber-600 mt-1 font-bold">${o.deliveryMethod} ${o.storeInfo ? `(${o.storeInfo})` : ''} | ${o.paymentMethod || '未紀錄'}</div>
                             </div>
                             <span class="px-3 py-1 rounded-full text-xs font-bold shadow-sm ${isDeleted ? 'bg-red-500 text-white border border-red-600' : (o.status === '處理中' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700')}">${o.status}</span>
                         </div>
@@ -538,6 +598,12 @@
                                     <span class="${isDeleted ? 'text-red-800 line-through' : 'font-medium text-stone-700'}">$${item.price * item.quantity}</span>
                                 </div>
                             `).join('')}
+                            ${o.shippingFee ? `
+                                <div class="flex justify-between text-sm mt-2 pt-2 border-t border-stone-100">
+                                    <span class="text-stone-500 text-xs">運費/處理費</span>
+                                    <span class="text-stone-500 text-xs">$${o.shippingFee}</span>
+                                </div>
+                            ` : ''}
                         </div>
                         <div class="flex justify-between font-bold ${isDeleted ? 'text-red-800 opacity-60' : 'text-stone-800 text-lg'}">
                             <span>總計</span>
@@ -944,24 +1010,39 @@
                         </div>
                         
                         <div class="pt-2">
-                            <label class="block text-xs font-bold text-stone-500 mb-2">希望取件方式 *</label>
+                            <label class="block text-xs font-bold text-stone-500 mb-2">取件方式 *</label>
                             <div class="flex gap-4">
                                 <label class="flex items-center gap-2 text-sm cursor-pointer">
-                                    <input type="radio" name="delivery" value="自取" checked class="text-amber-600 focus:ring-amber-500" onchange="toggleStoreInput()"> 自取
+                                    <input type="radio" name="delivery" value="自取" checked class="text-amber-600 focus:ring-amber-500" onchange="updateCheckoutForm()"> 自取
                                 </label>
                                 <label class="flex items-center gap-2 text-sm cursor-pointer">
-                                    <input type="radio" name="delivery" value="7-11" class="text-amber-600 focus:ring-amber-500" onchange="toggleStoreInput()"> 7-11
+                                    <input type="radio" name="delivery" value="7-11" class="text-amber-600 focus:ring-amber-500" onchange="updateCheckoutForm()"> 7-11
                                 </label>
                                 <label class="flex items-center gap-2 text-sm cursor-pointer">
-                                    <input type="radio" name="delivery" value="全家" class="text-amber-600 focus:ring-amber-500" onchange="toggleStoreInput()"> 全家
+                                    <input type="radio" name="delivery" value="全家" class="text-amber-600 focus:ring-amber-500" onchange="updateCheckoutForm()"> 全家
                                 </label>
                             </div>
                         </div>
 
                         <div id="store-input-container" class="hidden pt-2 bg-blue-50 p-3 rounded-lg border border-blue-100 mt-2">
-                            <label class="block text-xs font-bold text-blue-800 mb-1">取貨門市名稱 / 店號 *</label>
-                            <input type="text" id="checkout-store" class="w-full border border-blue-200 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="例如：台大門市 或 123456">
-                            <p class="text-[10px] text-blue-600 mt-1">請手動填寫您欲取件的超商門市資訊</p>
+                            <label class="block text-xs font-bold text-blue-800 mb-2">取貨門市名稱 / 店號 *</label>
+                            <div class="flex gap-2 mb-3">
+                                <a id="link-711" href="https://emap.pcsc.com.tw/ecmap/default.aspx" target="_blank" class="hidden bg-blue-600 text-white text-xs font-bold px-3 py-1.5 rounded-md hover:bg-blue-700 transition flex items-center gap-1 shadow-sm">
+                                    <i data-lucide="map-pin" class="w-3 h-3"></i> 查詢 7-11 門市
+                                </a>
+                                <a id="link-family" href="https://www.famiport.com.tw/Web_Famiport/page/ShopQuery.aspx" target="_blank" class="hidden bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-md hover:bg-green-700 transition flex items-center gap-1 shadow-sm">
+                                    <i data-lucide="map-pin" class="w-3 h-3"></i> 查詢全家門市
+                                </a>
+                            </div>
+                            <input type="text" id="checkout-store" class="w-full border border-blue-200 rounded-lg p-2.5 text-sm outline-none focus:border-blue-500" placeholder="例如：台大門市 或 123456">
+                            <p class="text-[10px] text-blue-600 mt-1">請點擊上方按鈕查詢，並手動填寫您欲取件的門市資訊</p>
+                        </div>
+                        
+                        <div class="pt-2 mt-2 border-t border-stone-100">
+                            <label class="block text-xs font-bold text-stone-500 mb-2">付款方式 *</label>
+                            <div id="payment-options-container" class="flex flex-col gap-3">
+                                <!-- 付款選項會根據取件方式動態載入 -->
+                            </div>
                         </div>
                     </div>
                 </div>
