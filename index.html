@@ -321,25 +321,24 @@
             btn.disabled = true;
 
             try {
-                // 環境在執行時會自動注入 API Key
-                const apiKey = ""; 
+                // ⚠️ 重要：部署到 GitHub Pages 時，請將您在 Google AI Studio 申請的 Gemini API Key 填入下方引號中
+                // 申請網址：https://aistudio.google.com/app/apikey
+                const apiKey = "AQ.Ab8RN6K7v7NFs36YXbeMUNZMLV9R8mmm-CaTJxhh9-YsShVyHw"; 
+                
                 const brand = deliveryMethod === '7-11' ? '7-11 (統一超商)' : '全家便利商店';
                 const typeStr = queryType === 'idByname' ? '店名' : '店號';
                 
-                // 簡化提示詞，移除所有可能導致安全或格式衝突的設定
                 const userQuery = `幫我上網搜尋台灣的「${brand}」門市。已知${typeStr}是「${queryValue}」。請直接給我對應的正確店名跟6碼店號。請用 JSON 格式回答我，不要加任何其他文字。`;
 
                 const payload = {
                     contents: [{ parts: [{ text: userQuery }] }],
-                    // 取消 ResponseSchema，改由系統指令強制要求 JSON 格式，以避免 Google Search Tool 與 Schema 衝突
                     systemInstruction: { parts: [{ text: "你是一個精準的台灣便利商店門市查詢助手。必須嚴格只回傳 JSON，格式：{\"storeName\": \"正確店名(勿含品牌名)\", \"storeId\": \"正確店號\"}。絕對不要回傳 Markdown 標記或其他文字說明。" }] },
                     tools: [{ "google_search": {} }],
                     generationConfig: {
-                        temperature: 0.1 // 極低隨機性，確保答案穩定
+                        temperature: 0.1 
                     }
                 };
 
-                // 實作指數退避重試
                 const fetchWithRetry = async (retries = 3) => {
                     const delays = [1000, 2500, 5000];
                     for (let i = 0; i < retries; i++) {
@@ -367,7 +366,6 @@
                 
                 if (!text) throw new Error("API 未回傳有效的文字內容");
 
-                // 強力萃取 JSON：避免 AI 不聽話加上了 Markdown 或廢話
                 text = text.replace(/```json/gi, '').replace(/```/gi, '').trim();
                 const startIndex = text.indexOf('{');
                 const endIndex = text.lastIndexOf('}');
@@ -381,7 +379,6 @@
                 
                 let foundAny = false;
                 
-                // 判斷並過濾多餘的文字
                 if (parsed.storeName && typeof parsed.storeName === 'string' && parsed.storeName.trim() !== "") {
                     nameInput.value = parsed.storeName.replace(/7-11|統一超商|全家便利商店|全家|門市/g, '').trim();
                     foundAny = true;
@@ -399,7 +396,6 @@
 
             } catch (error) {
                 console.error("AI 查詢詳細失敗原因:", error);
-                // 顯示精簡的錯誤訊息，幫助了解是 API 掛了還是沒抓到
                 const shortError = error.message.substring(0, 30);
                 showNotification(`AI 查詢失敗: ${shortError}...`, "error");
             } finally {
