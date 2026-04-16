@@ -141,11 +141,23 @@
             }
         };
 
+        // 新增：輸入物流編號功能
+        window.editTracking = async (orderId, currentTracking) => {
+            const num = prompt("請輸入物流編號 (若無請留空)：", currentTracking || '');
+            if (num === null) return; // 按下取消
+            try {
+                const orderRef = doc(db, 'artifacts', appId, 'public', 'data', 'orders', orderId);
+                await updateDoc(orderRef, { trackingNumber: num.trim() });
+                showNotification(`物流編號已更新`);
+            } catch(e) {
+                showNotification("更新物流編號失敗", "error");
+            }
+        };
+
         window.deleteOrder = async (orderId) => {
             if (!confirm('確定要刪除/取消此訂單嗎？操作後顧客端也會顯示已刪除。')) return;
             try {
                 const orderRef = doc(db, 'artifacts', appId, 'public', 'data', 'orders', orderId);
-                // 採用「軟刪除」標記狀態，保留歷史紀錄
                 await updateDoc(orderRef, { status: '已刪除' });
                 showNotification(`訂單 ${orderId} 已標記為刪除`);
             } catch(e) {
@@ -344,18 +356,32 @@
                     <td class="py-4 px-4 ${isDeleted ? 'opacity-60' : ''}">
                         <div class="text-sm font-bold text-stone-800">${o.recipientName || o.userName} <span class="text-xs font-normal text-stone-500 ml-1">${o.phone || ''}</span></div>
                         <div class="text-xs text-amber-600 font-medium mt-1">${o.deliveryMethod || '未指定'} ${o.storeInfo ? `(${o.storeInfo})` : ''}</div>
+                        ${o.trackingNumber ? `<div class="text-xs text-blue-600 font-mono mt-0.5"><i data-lucide="package" class="w-3 h-3 inline"></i> 物流: ${o.trackingNumber}</div>` : ''}
                         <div class="text-xs text-stone-500 mt-1">${o.items.map(i => `${i.name}x${i.quantity}`).join(', ')}</div>
                     </td>
                     <td class="py-4 px-4 font-bold ${isDeleted ? 'text-red-500 line-through' : 'text-amber-700'}">$${o.total}</td>
                     <td class="py-4 px-4">
                         <div class="flex items-center gap-2">
-                            <select onchange="updateOrderStatus('${o.id}', this.value)" ${isDeleted ? 'disabled' : ''} class="text-sm bg-white border border-stone-200 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer ${isDeleted ? 'text-red-600 bg-red-100' : (o.status==='處理中'?'text-blue-600':o.status==='已出貨'?'text-orange-500':'text-green-600')}">
+                            <select onchange="updateOrderStatus('${o.id}', this.value)" ${isDeleted ? 'disabled' : ''} class="text-sm bg-white border border-stone-200 rounded-lg px-2 py-1.5 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer ${isDeleted ? 'text-red-600 bg-red-100' : 'text-stone-700'}">
                                 <option value="處理中" ${o.status==='處理中'?'selected':''}>處理中</option>
+                                <option value="已接單" ${o.status==='已接單'?'selected':''}>已接單</option>
+                                <option value="商品製作中" ${o.status==='商品製作中'?'selected':''}>商品製作中</option>
+                                <option value="準備出貨" ${o.status==='準備出貨'?'selected':''}>準備出貨</option>
+                                <option value="待自取" ${o.status==='待自取'?'selected':''}>待自取</option>
                                 <option value="已出貨" ${o.status==='已出貨'?'selected':''}>已出貨</option>
                                 <option value="已完成" ${o.status==='已完成'?'selected':''}>已完成</option>
                                 ${isDeleted ? `<option value="已刪除" selected>已刪除</option>` : ''}
                             </select>
-                            ${!isDeleted ? `<button onclick="deleteOrder('${o.id}')" class="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="刪除訂單"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : ''}
+                            
+                            ${!isDeleted && (o.deliveryMethod === '7-11' || o.deliveryMethod === '全家') ? `
+                            <button onclick="editTracking('${o.id}', '${o.trackingNumber || ''}')" class="p-1.5 text-stone-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="輸入物流編號">
+                                <i data-lucide="truck" class="w-4 h-4"></i>
+                            </button>` : ''}
+
+                            ${!isDeleted ? `
+                            <button onclick="deleteOrder('${o.id}')" class="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="刪除訂單">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>` : ''}
                         </div>
                     </td>
                 </tr>
